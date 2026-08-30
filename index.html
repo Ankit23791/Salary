@@ -945,31 +945,43 @@ $('exportBtn').onclick = () => {
 const SHEET_KINDS = {
   attendance: {
     label: 'Attendance',
-    note: 'One row per employee, with the month already totalled into days.',
-    headers: ['S.No', 'Employee ID', 'Employee Name', 'Total Days', 'Present',
-              'Week Off', 'Paid Leaves', 'Absent', 'Paid Holiday',
-              'Extra Days', 'Overtime Hours'],
+    note: 'The day grid from the attendance app. First column must be headed Employee ID.',
+    headersShort: ['Employee ID', 'Employee Name', 'Designation', 'Area',
+                   '1 … 31 (day codes)', 'Total Days', 'Present', 'Week Off',
+                   'Paid Leaves', 'Absent', 'Paid Holiday', 'Extra Days', 'OT Hours'],
+    headers: ['Employee ID', 'Employee Name', 'Designation', 'Area',
+              ...Array.from({ length: 31 }, (_, i) => String(i + 1)),
+              'Total Days', 'Present', 'Week Off', 'Paid Leaves', 'Absent',
+              'Paid Holiday', 'Extra Days', 'OT Hours'],
     sample: [
-      [1, '6',  'Tushar Lakhmani', 31, 27, 4, 0, 0, 0, 0, 0],
-      [2, '8',  'Sachin Kumar',    31, 30, 1, 0, 0, 0, 3, 30],
+      ['6', 'Tushar Lakhmani', 'Customer Executive', 'Office',
+       ...Array.from({ length: 31 }, (_, i) => (i % 7 === 6 ? 'Off' : 'P')),
+       31, 27, 4, 0, 0, 0, 0, 0],
+      ['8', 'Sachin Kumar', 'Warehouse Incharge', 'Sector 101',
+       ...Array.from({ length: 31 }, () => 'P'),
+       31, 30, 1, 0, 0, 0, 3, 30],
     ],
-    textCols: ['B'],
+    textCols: ['A'],
     map: {
       employeeid: 'emp_id', empid: 'emp_id', id: 'emp_id',
-      employeename: 'name', empolyeename: 'name', name: 'name',
+      employeename: 'name', empolyeename: 'name', name: 'name', staffname: 'name',
+      designation: 'designation', area: 'area',
       totaldays: 'total_days', present: 'present',
-      weekoff: 'week_off', weekoffs: 'week_off',
+      weekoff: 'week_off', weekoffs: 'week_off', off: 'week_off',
       paidleaves: 'paid_leaves', paidleave: 'paid_leaves', leaves: 'paid_leaves',
       absent: 'absent', absentdays: 'absent',
-      paidholiday: 'paid_holiday', paidholidays: 'paid_holiday', holiday: 'paid_holiday',
+      paidholiday: 'paid_holiday', paidholidays: 'paid_holiday',
       extradays: 'extra_days', noofextradays: 'extra_days',
-      overtimehours: 'ot_hours', overtime: 'ot_hours', othours: 'ot_hours',
+      othours: 'ot_hours', overtimehours: 'ot_hours', overtime: 'ot_hours', ot: 'ot_hours',
+      totalhrs: 'total_hrs', totalhours: 'total_hrs',
     },
     need: ['emp_id'],
     numeric: ['total_days', 'present', 'week_off', 'paid_leaves', 'absent',
-              'paid_holiday', 'extra_days', 'ot_hours'],
+              'paid_holiday', 'extra_days', 'ot_hours', 'total_hrs'],
+    dayGrid: true,
     show: [['emp_id', 'ID'], ['name', 'Name'], ['present', 'Present'],
-           ['absent', 'Absent'], ['extra_days', 'Extra'], ['ot_hours', 'OT hrs']],
+           ['absent', 'Absent'], ['week_off', 'Off'], ['paid_leaves', 'Leave'],
+           ['extra_days', 'Extra'], ['ot_hours', 'OT hrs']],
   },
 
   incentive: {
@@ -1180,7 +1192,7 @@ function renderRun() {
           <h3><span class="dot ${dot}"></span>${esc(cfg.label)} sheet</h3>
           <div class="sub" style="margin-left:15px">${esc(cfg.note)}</div>
 
-          <div class="fieldlist cols">${cfg.headers.map(esc).join(' · ')}</div>
+          <div class="fieldlist cols">${(cfg.headersShort || cfg.headers).map(esc).join(' · ')}</div>
 
           ${f ? `
             <div style="font-size:13px">
@@ -1222,7 +1234,7 @@ function showAllFormats() {
       <div style="margin-bottom:18px">
         <div style="font-weight:600;font-size:14px">${esc(cfg.label)} sheet</div>
         <div class="sub" style="margin-bottom:6px">${esc(cfg.note)}</div>
-        <div class="fieldlist">${cfg.headers.map(esc).join(' · ')}</div>
+        <div class="fieldlist">${(cfg.headersShort || cfg.headers).map(esc).join(' · ')}</div>
         <button class="btn btn-ghost" data-tpl2="${kind}" style="margin-top:8px">
           Download ${esc(cfg.label.toLowerCase())} template
         </button>
@@ -1278,17 +1290,39 @@ async function parseSheet(kind, file) {
     return alert('That sheet looks empty. It needs a heading row plus at least one row of data.');
 
   const cols = {};
+  const dayCols = {};                       // { 1: colIndex, 2: colIndex, ... }
   gridF[0].map(normKey).forEach((h, i) => {
     const f = cfg.map[h];
-    if (f && cols[f] === undefined) cols[f] = i;
+    if (f && cols[f] === undefined) { cols[f] = i; return; }
+    // day-grid headings look like "1", "1We", "15Tu" — the day number leads
+    if (cfg.dayGrid) {
+      const m = h.match(/^(\d{1,2})(mo|tu|we|th|fr|sa|su)?$/);
+      if (m) {
+        const d = Number(m[1]);
+        if (d >= 1 && d <= 31 && dayCols[d] === undefined) dayCols[d] = i;
+      }
+    }
   });
 
-  const missing = cfg.need.filter((f) => cols[f] === undefined);
+  const nice = { emp_id: 'Employee ID', name: 'Employee Name', amount: 'Amount', date: 'Date' };
+  const missing = cfg.need.filter((f) => cols[f] !== undefined ? false : f !== 'emp_id');
   if (missing.length) {
-    const nice = { emp_id: 'Employee ID', amount: 'Amount', date: 'Date' };
-    return alert(`Couldn't find these columns: ${missing.map((m) => nice[m] || m).join(', ')}.\n\n` +
-                 `The first row of the sheet must be the headings. ` +
-                 `Use the Template button to see the expected layout.`);
+    const found = gridF[0].map((h) => String(h ?? '').replace(/\s+/g, ' ').trim())
+                          .filter(Boolean);
+    return headingError(cfg,
+      `Missing column${missing.length > 1 ? 's' : ''}: <b>${missing.map((m) => esc(nice[m] || m)).join(', ')}</b>.`,
+      'The first row of the sheet has to be the column headings.',
+      found);
+  }
+
+  if (!cfg.noEmp && cols.emp_id === undefined) {
+    const found = gridF[0].map((h) => String(h ?? '').replace(/\s+/g, ' ').trim())
+                          .filter(Boolean);
+    return headingError(cfg,
+      'This sheet has no <b>Employee ID</b> column, so nothing can be uploaded.',
+      `Rows are matched to people by Employee ID only — never by name, because
+       two people can share a name and one wrong match means one wrong payment.`,
+      found);
   }
 
   const cell = (r, f) => {
@@ -1302,7 +1336,7 @@ async function parseSheet(kind, file) {
     return shown || String(rv ?? '').trim();
   };
 
-  const known = new Set(staff.map((e) => String(e.emp_id).toLowerCase()));
+  const known = new Map(staff.map((e) => [String(e.emp_id).toLowerCase(), e]));
   const good = [], bad = [];
 
   for (let r = 1; r < gridF.length; r++) {
@@ -1327,6 +1361,32 @@ async function parseSheet(kind, file) {
     if (cfg.need.includes('amount') && rec.amount === 0 && cell(r, 'amount') === '')
       problems.push('no amount');
 
+    // day grid: keep each day's code so we can tell later who worked a holiday
+    if (cfg.dayGrid && Object.keys(dayCols).length) {
+      const days = {};
+      Object.entries(dayCols).forEach(([d, i]) => {
+        const v = String(gridF[r]?.[i] ?? '').trim();
+        if (v) days[d] = v;
+      });
+      if (Object.keys(days).length) rec.days = days;
+    }
+
+    // Identity comes from Employee ID and nothing else. The name column is
+    // only ever used to cross-check that the ID points at who Sachin meant.
+    let resolvedId = null, matched = false, nameWarn = null;
+    if (!cfg.noEmp) {
+      if (!rec.emp_id) {
+        problems.push('no Employee ID');
+      } else {
+        resolvedId = String(rec.emp_id);
+        const hit = known.get(resolvedId.toLowerCase());
+        if (hit) {
+          matched = true;
+          if (rec.name && normKey(rec.name) !== normKey(hit.name)) nameWarn = hit.name;
+        }
+      }
+    }
+
     if (kind === 'holiday') {
       const d = parseDMY(rec.date);
       if (!d) problems.push(`date "${rec.date}" not understood — use dd/mm/yy`);
@@ -1338,11 +1398,46 @@ async function parseSheet(kind, file) {
       continue;
     }
 
-    const matched = cfg.noEmp ? true : known.has(String(rec.emp_id).toLowerCase());
-    good.push({ row_no: r + 1, emp_id: cfg.noEmp ? null : String(rec.emp_id), matched, data: rec });
+    good.push({
+      row_no: r + 1,
+      emp_id: cfg.noEmp ? null : resolvedId,
+      matched: cfg.noEmp ? true : matched,
+      nameWarn,
+      data: rec,
+    });
   }
 
   previewSheet(kind, file.name, good, bad);
+}
+
+function headingError(cfg, headline, why, foundHeadings) {
+  openModal(`${cfg.label} sheet — can't read this file`, `
+    <p style="font-size:14px;margin:0 0 10px">${headline}</p>
+    <p style="font-size:14px;color:var(--ink-soft);margin:0 0 16px">${why}</p>
+
+    <p class="eyebrow" style="margin:0 0 6px">Headings this sheet needs</p>
+    <div class="fieldlist" style="margin-bottom:16px">
+      ${(cfg.headersShort || cfg.headers).map(esc).join(' · ')}
+    </div>
+
+    <p class="eyebrow" style="margin:0 0 6px">Headings found in your file</p>
+    <div class="fieldlist" style="margin-bottom:16px">
+      ${foundHeadings.length ? foundHeadings.slice(0, 40).map(esc).join(' · ') : '(none)'}
+      ${foundHeadings.length > 40 ? ' …' : ''}
+    </div>
+
+    <p style="font-size:13.5px;color:var(--ink-soft);margin:0">
+      Fix the heading row in Excel and upload again. The Template button gives
+      you a file with the headings already correct.
+    </p>
+
+    <div class="foot">
+      <button class="btn btn-ghost" data-close>Close</button>
+      <button class="btn btn-green" id="tplFromErr">Download template</button>
+    </div>`, 'lg');
+
+  $('tplFromErr').onclick = () => downloadTemplate(
+    Object.keys(SHEET_KINDS).find((k) => SHEET_KINDS[k] === cfg));
 }
 
 function parseDMY(v) {
@@ -1360,13 +1455,15 @@ function parseDMY(v) {
 function previewSheet(kind, filename, good, bad) {
   const cfg = SHEET_KINDS[kind];
   const unmatched = good.filter((g) => !g.matched).length;
+  const nameWarns = good.filter((g) => g.nameWarn);
   const nameOf = new Map(staff.map((e) => [String(e.emp_id).toLowerCase(), e.name]));
 
   const cellOut = (g, f, fmt) => {
-    const v = g.data[f];
-    if (f === 'emp_id' && !g.matched) return `<span style="color:var(--rose)">${esc(v)} ?</span>`;
+    const v = f === 'emp_id' ? (g.emp_id ?? '') : g.data[f];
+    if (f === 'emp_id' && !g.matched)
+      return `<span style="color:var(--rose)">${esc(v || '—')} ?</span>`;
     if (fmt === 'money') return money(v);
-    return esc(v ?? '—');
+    return esc(v === '' || v === undefined || v === null ? '—' : v);
   };
 
   openModal(`${cfg.label} sheet — check before saving`, `
@@ -1377,8 +1474,15 @@ function previewSheet(kind, filename, good, bad) {
     </div>
 
     ${unmatched ? `<p style="font-size:13.5px;color:var(--amber);margin:0 0 12px">
-      Some Employee IDs aren't in the staff register. Those rows are saved but
-      marked, so nothing silently disappears — check them before the month is run.
+      Some rows couldn't be matched to anyone in the staff register. They are
+      saved but marked, so nothing silently disappears — check them before the
+      month is run.
+    </p>` : ''}
+
+    ${nameWarns.length ? `<p style="font-size:13.5px;color:var(--amber);margin:0 0 12px">
+      ${nameWarns.length} row${nameWarns.length === 1 ? '' : 's'} where the name in
+      the sheet doesn't match the name on that Employee ID in the register. The ID
+      decides who gets paid, so check these before saving.
     </p>` : ''}
 
     ${good.length ? `
@@ -1389,7 +1493,12 @@ function previewSheet(kind, filename, good, bad) {
         </tr></thead><tbody>
         ${good.slice(0, 200).map((g) => `<tr${g.matched ? '' : ' class="badrow"'}>
           ${cfg.show.map(([f, , fmt]) => `<td>${cellOut(g, f, fmt)}</td>`).join('')}
-          ${cfg.noEmp ? '' : `<td class="sub">${g.matched ? esc(nameOf.get(String(g.emp_id).toLowerCase())) : 'not found'}</td>`}
+          ${cfg.noEmp ? '' : `<td class="sub">${
+          g.matched
+            ? (g.nameWarn
+                ? `<span style="color:var(--amber)">${esc(g.nameWarn)} ⚠</span>`
+                : esc(nameOf.get(String(g.emp_id).toLowerCase())))
+            : 'not found'}</td>`}
         </tr>`).join('')}
         </tbody></table>
       </div>
