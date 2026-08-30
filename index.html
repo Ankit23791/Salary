@@ -1311,6 +1311,7 @@ async function parseSheet(kind, file) {
 
   const cols = {};
   const dayCols = {};                       // { 1: colIndex, 2: colIndex, ... }
+  const dayNames = {};                      // { 1: 'we', 5: 'su', ... }
   gridF[hdr].map(normKey).forEach((h, i) => {
     const f = cfg.map[h];
     if (f && cols[f] === undefined) { cols[f] = i; return; }
@@ -1319,7 +1320,10 @@ async function parseSheet(kind, file) {
       const m = h.match(/^(\d{1,2})(mo|tu|we|th|fr|sa|su)?$/);
       if (m) {
         const d = Number(m[1]);
-        if (d >= 1 && d <= 31 && dayCols[d] === undefined) dayCols[d] = i;
+        if (d >= 1 && d <= 31 && dayCols[d] === undefined) {
+          dayCols[d] = i;
+          if (m[2]) dayNames[d] = m[2];      // 'we', 'su', …
+        }
       }
     }
   });
@@ -1359,6 +1363,11 @@ async function parseSheet(kind, file) {
   const known = new Map(staff.map((e) => [String(e.emp_id).toLowerCase(), e]));
   const good = [], bad = [];
 
+  // The calendar for the month this run is for. Day codes in the sheet are
+  // positional, so knowing which of them are Sundays comes from here.
+  const cal = monthCalendar(currentRun.period);
+  const calWarn = calendarMismatch(cal, dayNames);
+
   for (let r = hdr + 1; r < gridF.length; r++) {
     if (!gridF[r] || gridF[r].every((c) => String(c ?? '').trim() === '')) continue;
 
@@ -1388,7 +1397,12 @@ async function parseSheet(kind, file) {
         const v = String(gridF[r]?.[i] ?? '').trim();
         if (v) days[d] = v;
       });
-      if (Object.keys(days).length) rec.days = days;
+      if (Object.keys(days).length) {
+        rec.days = days;
+        // count the Sundays this person was marked present, for later use
+        rec.sundays_in_month = cal.sundays.length;
+        rec.sunday_codes = cal.sundays.map((d) => days[d] || '').filter(Boolean).join(',');
+      }
     }
 
     // Identity comes from Employee ID and nothing else. The name column is
@@ -1444,7 +1458,7 @@ async function parseSheet(kind, file) {
     }
   }
 
-  previewSheet(kind, file.name, good, bad);
+  previewSheet(kind, file.name, good, bad, cfg.dayGrid ? { cal, calWarn } : null);
 }
 
 function headingError(cfg, headline, why, foundHeadings) {
@@ -1477,6 +1491,33 @@ function headingError(cfg, headline, why, foundHeadings) {
     Object.keys(SHEET_KINDS).find((k) => SHEET_KINDS[k] === cfg));
 }
 
+const WD = ['su', 'mo', 'tu', 'we', 'th', 'fr', 'sa'];
+
+// { days, sundays: [5,12,19,26], weekday: { 1:'we', 2:'th', … }, label }
+function monthCalendar(period) {
+  const [y, m] = String(period).split('-').map(Number);
+  const days = new Date(y, m, 0).getDate();
+  const weekday = {}, sundays = [];
+  for (let d = 1; d <= days; d++) {
+    const wd = WD[new Date(y, m - 1, d).getDay()];
+    weekday[d] = wd;
+    if (wd === 'su') sundays.push(d);
+  }
+  return { year: y, month: m, days, weekday, sundays };
+}
+
+// does the sheet's own day labelling agree with the real calendar?
+function calendarMismatch(cal, dayNames) {
+  const labelled = Object.keys(dayNames);
+  if (!labelled.length) return null;
+  const wrong = labelled.filter((d) => dayNames[d] !== cal.weekday[d]);
+  if (!wrong.length) return null;
+  const d = wrong[0];
+  return `The sheet labels day ${d} as ${dayNames[d].toUpperCase()}, but in this ` +
+         `month it is a ${cal.weekday[d].toUpperCase()}. The sheet may be for a ` +
+         `different month.`;
+}
+
 function parseDMY(v) {
   if (!v) return null;
   if (/^\d{4}-\d{2}-\d{2}$/.test(v)) return v;               // already ISO
@@ -1489,7 +1530,7 @@ function parseDMY(v) {
   return `${y}-${String(mo).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
 }
 
-function previewSheet(kind, filename, good, bad) {
+function previewSheet(kind, filename, good, bad, calInfo) {
   const cfg = SHEET_KINDS[kind];
   const unmatched = good.filter((g) => !g.matched).length;
   const nameWarns = good.filter((g) => g.nameWarn);
@@ -1514,6 +1555,16 @@ function previewSheet(kind, filename, good, bad) {
       Some rows couldn't be matched to anyone in the staff register. They are
       saved but marked, so nothing silently disappears — check them before the
       month is run.
+    </p>` : ''}
+
+    ${calInfo ? `<p style="font-size:13.5px;margin:0 0 12px;color:var(--ink-soft)">
+      ${esc(currentRun.label)} has <b>${calInfo.cal.days} days</b> and
+      <b>${calInfo.cal.sundays.length} Sundays</b>
+      (${calInfo.cal.sundays.join(', ')}).
+    </p>` : ''}
+
+    ${calInfo && calInfo.calWarn ? `<p style="font-size:13.5px;color:var(--rose);margin:0 0 12px">
+      ${esc(calInfo.calWarn)}
     </p>` : ''}
 
     ${nameWarns.length ? `<p style="font-size:13.5px;color:var(--amber);margin:0 0 12px">
