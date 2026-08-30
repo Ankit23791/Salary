@@ -181,8 +181,9 @@
     <div class="controls">
       <input class="search" id="q" placeholder="Search name, ID, bank, account" />
       <select id="fArea"><option value="all">All areas</option></select>
-      <select id="fDesig">
-        <option value="all">All designations</option>
+      <select id="fDesig"><option value="all">All designations</option></select>
+      <select id="fType">
+        <option value="all">Full + part time</option>
         <option value="Full Time">Full time</option>
         <option value="Part Time">Part time</option>
       </select>
@@ -213,14 +214,14 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
    Project Settings → API Keys. Use the anon / publishable key.
    =================================================================== */
 const SUPABASE_URL = 'https://vphmuuhnfqluvhtdpbhb.supabase.co';
-const SUPABASE_ANON_KEY = 'sb_publishable_2hAro_6cC50VDF77uiQHTw_QohUNhKe';
+const SUPABASE_ANON_KEY = 'PASTE_YOUR_PUBLISHABLE_KEY_HERE';
 
 const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 /* ------------------------------ state ------------------------------ */
 let profile = null;
 let staff = [];
-const filters = { q: '', area: 'all', desig: 'all', status: 'all' };
+const filters = { q: '', area: 'all', desig: 'all', type: 'all', status: 'all' };
 const isMain = () => profile?.role === 'main';
 
 const $ = (id) => document.getElementById(id);
@@ -280,17 +281,22 @@ async function load() {
     return;
   }
   staff = data || [];
-  refreshAreas();
+  refreshLists();
   render();
 }
 
-function refreshAreas() {
-  const sel = $('fArea'), current = sel.value;
+function fillSelect(sel, values, allLabel, current) {
+  sel.innerHTML = `<option value="all">${allLabel}</option>` +
+    values.map((v) => `<option value="${esc(v)}">${esc(v)}</option>`).join('');
+  sel.value = values.includes(current) ? current : 'all';
+  return sel.value;
+}
+
+function refreshLists() {
   const areas = [...new Set(staff.map((e) => e.area).filter(Boolean))].sort();
-  sel.innerHTML = '<option value="all">All areas</option>' +
-    areas.map((a) => `<option value="${esc(a)}">${esc(a)}</option>`).join('');
-  sel.value = areas.includes(current) ? current : 'all';
-  filters.area = sel.value;
+  const titles = [...new Set(staff.map((e) => e.designation).filter(Boolean))].sort();
+  filters.area = fillSelect($('fArea'), areas, 'All areas', filters.area);
+  filters.desig = fillSelect($('fDesig'), titles, 'All designations', filters.desig);
 }
 
 function visible() {
@@ -298,10 +304,11 @@ function visible() {
   return staff.filter((e) => {
     if (filters.area !== 'all' && e.area !== filters.area) return false;
     if (filters.desig !== 'all' && e.designation !== filters.desig) return false;
+    if (filters.type !== 'all' && e.emp_type !== filters.type) return false;
     if (filters.status === 'active' && !e.active) return false;
     if (filters.status === 'inactive' && e.active) return false;
     if (n) {
-      const hay = `${e.emp_id} ${e.name} ${e.area} ${e.bank_name} ${e.account_no} ${e.ifsc}`.toLowerCase();
+      const hay = `${e.emp_id} ${e.name} ${e.area} ${e.designation} ${e.bank_name} ${e.account_no} ${e.ifsc}`.toLowerCase();
       if (!hay.includes(n)) return false;
     }
     return true;
@@ -312,6 +319,7 @@ function filterLabel() {
   return [
     filters.area === 'all' ? null : filters.area,
     filters.desig === 'all' ? null : filters.desig,
+    filters.type === 'all' ? null : filters.type,
     filters.status === 'all' ? 'all staff' : filters.status,
   ].filter(Boolean).join(' · ');
 }
@@ -325,10 +333,11 @@ function render() {
   $('payout').textContent = money(active.reduce((s, e) => s + Number(e.monthly_salary || 0), 0));
   $('sListed').textContent = rows.length;
   $('sActive').textContent = active.length;
-  $('sFull').textContent = active.filter((e) => e.designation === 'Full Time').length;
-  $('sPart').textContent = active.filter((e) => e.designation === 'Part Time').length;
+  $('sFull').textContent = active.filter((e) => e.emp_type === 'Full Time').length;
+  $('sPart').textContent = active.filter((e) => e.emp_type === 'Part Time').length;
 
-  const dirty = filters.q || filters.area !== 'all' || filters.desig !== 'all' || filters.status !== 'all';
+  const dirty = filters.q || filters.area !== 'all' || filters.desig !== 'all'
+                || filters.type !== 'all' || filters.status !== 'all';
   $('clearBtn').classList.toggle('hidden', !dirty);
 
   $('footNote').textContent =
@@ -349,7 +358,7 @@ function render() {
   $('tableWrap').innerHTML = `
     <table>
       <thead><tr>
-        <th>Employee</th><th>Bank details</th><th>Area</th><th>Designation</th>
+        <th>Employee</th><th>Bank details</th><th>Area</th><th>Designation</th><th>Type</th>
         <th class="r">Monthly salary</th><th>Status</th>${isMain() ? '<th class="r">Edit</th>' : ''}
       </tr></thead>
       <tbody>${rows.map(rowHtml).join('')}</tbody>
@@ -367,7 +376,7 @@ function render() {
 }
 
 function rowHtml(e) {
-  const ft = e.designation === 'Full Time';
+  const ft = e.emp_type === 'Full Time';
   const status = isMain()
     ? `<button class="tag ${e.active ? 'tag-on' : 'tag-off'}" data-toggle="${e.id}"
          title="${e.active ? 'Mark inactive' : 'Mark active'}">${e.active ? 'Active' : 'Inactive'}</button>`
@@ -378,7 +387,8 @@ function rowHtml(e) {
       <td class="sub"><div style="color:var(--ink)">${esc(e.bank_name || '—')}</div>
           <div>A/c ${esc(e.account_no || '—')}</div><div>${esc(e.ifsc || '—')}</div></td>
       <td>${esc(e.area || '—')}</td>
-      <td><span class="tag ${ft ? 'tag-ft' : 'tag-pt'}">${esc(e.designation)}</span></td>
+      <td>${esc(e.designation || '—')}</td>
+      <td><span class="tag ${ft ? 'tag-ft' : 'tag-pt'}">${esc(e.emp_type || '—')}</span></td>
       <td class="r mono">${money(e.monthly_salary)}</td>
       <td>${status}</td>
       ${isMain() ? `<td class="r" style="white-space:nowrap">
@@ -392,10 +402,13 @@ function rowHtml(e) {
 $('q').oninput = (e) => { filters.q = e.target.value; render(); };
 $('fArea').onchange = (e) => { filters.area = e.target.value; render(); };
 $('fDesig').onchange = (e) => { filters.desig = e.target.value; render(); };
+$('fType').onchange = (e) => { filters.type = e.target.value; render(); };
 $('fStatus').onchange = (e) => { filters.status = e.target.value; render(); };
 $('clearBtn').onclick = () => {
-  filters.q = ''; filters.area = 'all'; filters.desig = 'all'; filters.status = 'all';
-  $('q').value = ''; $('fArea').value = 'all'; $('fDesig').value = 'all'; $('fStatus').value = 'all';
+  filters.q = ''; filters.area = 'all'; filters.desig = 'all';
+  filters.type = 'all'; filters.status = 'all';
+  $('q').value = ''; $('fArea').value = 'all'; $('fDesig').value = 'all';
+  $('fType').value = 'all'; $('fStatus').value = 'all';
   render();
 };
 
@@ -421,15 +434,16 @@ function confirmDelete(emp) {
     const { error } = await sb.from('employees').delete().eq('id', emp.id);
     if (error) return alert(`Couldn't remove: ${error.message}`);
     staff = staff.filter((e) => e.id !== emp.id);
-    closeModal(); refreshAreas(); render();
+    closeModal(); refreshLists(); render();
   };
 }
 
 $('addBtn').onclick = () => openForm(null);
 
 function openForm(emp) {
-  const v = emp || { designation: 'Full Time', active: true };
+  const v = emp || { emp_type: 'Full Time', active: true };
   const areas = [...new Set(staff.map((e) => e.area).filter(Boolean))].sort();
+  const titles = [...new Set(staff.map((e) => e.designation).filter(Boolean))].sort();
   openModal(emp ? 'Edit employee' : 'Add employee', `
     <div class="grid2">
       <div><label class="f eyebrow">Employee ID</label>
@@ -446,9 +460,12 @@ function openForm(emp) {
         <input id="fAreaIn" list="areaList" placeholder="Rohini" value="${esc(v.area || '')}">
         <datalist id="areaList">${areas.map((a) => `<option value="${esc(a)}">`).join('')}</datalist></div>
       <div><label class="f eyebrow">Designation</label>
+        <input id="fDesigIn" list="titleList" placeholder="Delivery Partner" value="${esc(v.designation || '')}">
+        <datalist id="titleList">${titles.map((t) => `<option value="${esc(t)}">`).join('')}</datalist></div>
+      <div><label class="f eyebrow">Employment type</label>
         <div class="seg">
-          <button type="button" data-d="Full Time" class="${v.designation === 'Full Time' ? 'on' : ''}">Full time</button>
-          <button type="button" data-d="Part Time" class="${v.designation === 'Part Time' ? 'on' : ''}">Part time</button>
+          <button type="button" data-d="Full Time" class="${v.emp_type === 'Full Time' ? 'on' : ''}">Full time</button>
+          <button type="button" data-d="Part Time" class="${v.emp_type === 'Part Time' ? 'on' : ''}">Part time</button>
         </div></div>
       <div><label class="f eyebrow">Monthly salary (₹)</label>
         <input id="fSalary" class="mono" type="number" min="0" placeholder="25000"
@@ -462,10 +479,10 @@ function openForm(emp) {
       <button class="btn btn-green" id="saveBtn">${emp ? 'Save changes' : 'Add employee'}</button>
     </div>`);
 
-  let designation = v.designation || 'Full Time';
+  let empType = v.emp_type || 'Full Time';
   document.querySelectorAll('.seg button').forEach((b) => {
     b.onclick = () => {
-      designation = b.dataset.d;
+      empType = b.dataset.d;
       document.querySelectorAll('.seg button').forEach((x) => x.classList.toggle('on', x === b));
     };
   });
@@ -480,7 +497,8 @@ function openForm(emp) {
       account_no: $('fAcc').value.trim(),
       ifsc: $('fIfsc').value.trim().toUpperCase(),
       area: $('fAreaIn').value.trim(),
-      designation,
+      designation: $('fDesigIn').value.trim(),
+      emp_type: empType,
       monthly_salary: Number($('fSalary').value || 0),
       active: $('fActive').checked,
     };
@@ -510,7 +528,7 @@ function openForm(emp) {
 /* ============================ EXCEL IMPORT ========================== */
 
 const TEMPLATE_HEADERS = ['Employee ID', 'Name', 'Bank', 'Account No', 'IFSC',
-                          'Area', 'Designation', 'Monthly Salary', 'Status'];
+                          'Area', 'Designation', 'Employment Type', 'Monthly Salary', 'Status'];
 
 // header text → our field name. Anything unrecognised is ignored.
 const HEADER_MAP = {
@@ -520,8 +538,12 @@ const HEADER_MAP = {
   accountno: 'account_no', accountnumber: 'account_no', account: 'account_no',
   acno: 'account_no', ac: 'account_no', bankaccount: 'account_no',
   ifsc: 'ifsc', ifsccode: 'ifsc',
-  area: 'area', location: 'area', branch: 'area',
-  designation: 'designation', type: 'designation', employmenttype: 'designation',
+  area: 'area', location: 'area', branch: 'area', zone: 'area',
+  designation: 'designation', jobtitle: 'designation', title: 'designation',
+  post: 'designation', role: 'designation', profile: 'designation',
+  employmenttype: 'emp_type', emptype: 'emp_type', type: 'emp_type',
+  employment: 'emp_type', workingtype: 'emp_type', stafftype: 'emp_type',
+  fulltimeparttime: 'emp_type', parttimefulltime: 'emp_type',
   salary: 'monthly_salary', monthlysalary: 'monthly_salary', pay: 'monthly_salary',
   monthlypay: 'monthly_salary', wage: 'monthly_salary',
   status: 'active', active: 'active',
@@ -556,7 +578,8 @@ function openImport() {
       <tr><td>Name</td><td>Yes</td><td></td></tr>
       <tr><td>Area</td><td>Yes</td><td>Drives the area filter</td></tr>
       <tr><td>Monthly Salary</td><td>Yes</td><td>Numbers only, no ₹ or commas needed</td></tr>
-      <tr><td>Designation</td><td>No</td><td>Full Time or Part Time. Blank = Full Time</td></tr>
+      <tr><td>Designation</td><td>No</td><td>Job title, e.g. Delivery Partner. Free text</td></tr>
+      <tr><td>Employment Type</td><td>No</td><td>Full Time or Part Time. Leave the column out and existing staff keep what they have</td></tr>
       <tr><td>Bank, Account No, IFSC</td><td>No</td><td>Format Account No as <b>Text</b> in Excel so leading zeros survive</td></tr>
       <tr><td>Status</td><td>No</td><td>Active or Inactive. Blank = Active</td></tr>
     </table>
@@ -590,8 +613,8 @@ function openImport() {
 
   $('tplBtn').onclick = () => {
     const csv = TEMPLATE_HEADERS.join(',') + '\n' +
-      'EMP-001,Ramesh Kumar,State Bank of India,30123456789,SBIN0000123,Rohini,Full Time,25000,Active\n' +
-      'EMP-002,Sunita Devi,HDFC Bank,50100987654321,HDFC0001234,Pitampura,Part Time,9000,Active\n';
+      'EMP-001,Ramesh Kumar,HDFC Bank,50100801866294,HDFC0000280,Zone 1,Delivery Partner,Full Time,25000,Active\n' +
+      'EMP-002,Sunita Devi,State Bank of India,30123456789,SBIN0000123,Head Office,Pharmacist,Part Time,9000,Active\n';
     const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8;' }));
     const a = document.createElement('a');
     a.href = url; a.download = 'staff-import-template.csv'; a.click();
@@ -605,18 +628,22 @@ async function handleFile(file) {
   errEl.classList.add('hidden');
   $('drop').innerHTML = '<div style="font-size:15px">Reading the file…</div>';
 
-  let grid;
+  let gridF, gridR;
   try {
     const XLSX = await loadSheetJS();
     const buf = await file.arrayBuffer();
     const wb = XLSX.read(buf, { type: 'array' });
     const sheet = wb.Sheets[wb.SheetNames[0]];
-    // raw:false reads each cell as it is displayed in Excel, so account
-    // numbers keep their leading zeros and never turn into 3.01235E+13
-    grid = XLSX.utils.sheet_to_json(sheet, { header: 1, blankrows: false, defval: '', raw: false });
+    // Two passes. raw:false gives what Excel shows on screen, which keeps
+    // leading zeros in Text columns. raw:true gives the underlying value,
+    // which is what we need when Excel is displaying 5.01008E+13.
+    gridF = XLSX.utils.sheet_to_json(sheet, { header: 1, blankrows: false, defval: '', raw: false });
+    gridR = XLSX.utils.sheet_to_json(sheet, { header: 1, blankrows: false, defval: '', raw: true });
   } catch (e) {
     return fail(`Couldn't read that file: ${e.message}`);
   }
+
+  const grid = gridF;
 
   if (!grid || grid.length < 2)
     return fail('That sheet looks empty. It needs a heading row plus at least one employee.');
@@ -633,7 +660,21 @@ async function handleFile(file) {
                 `The first row of the sheet must be the headings.`);
   }
 
-  const cell = (row, field) => cols[field] === undefined ? '' : String(row[cols[field]] ?? '').trim();
+  // For each cell decide which of the two readings to trust.
+  // Text cell  → the displayed string, so 0123456789 keeps its zero.
+  // Number cell → the underlying number written out in full, so a 14-digit
+  //               account number never arrives as 5.01008E+13.
+  const cell = (r, field) => {
+    const i = cols[field];
+    if (i === undefined) return '';
+    const rawv = gridR[r]?.[i];
+    if (typeof rawv === 'number' && isFinite(rawv)) {
+      return Number.isInteger(rawv) ? rawv.toFixed(0) : String(rawv);
+    }
+    const shown = String(gridF[r]?.[i] ?? '').trim();
+    return shown || String(rawv ?? '').trim();
+  };
+  const has = (f) => cols[f] !== undefined;
   const byEmpId = new Map(staff.map((e) => [e.emp_id.toLowerCase(), e]));
   const seen = new Map();
   const good = [], bad = [];
@@ -642,10 +683,10 @@ async function handleFile(file) {
     const row = grid[r];
     if (!row || row.every((c) => String(c ?? '').trim() === '')) continue;
 
-    const empId = cell(row, 'emp_id');
-    const name = cell(row, 'name');
-    const area = cell(row, 'area');
-    const rawSalary = cell(row, 'monthly_salary').replace(/[₹,\s]/g, '');
+    const empId = cell(r, 'emp_id');
+    const name = cell(r, 'name');
+    const area = cell(r, 'area');
+    const rawSalary = cell(r, 'monthly_salary').replace(/[₹,\s]/g, '');
     const salary = Number(rawSalary);
 
     const problems = [];
@@ -656,30 +697,36 @@ async function handleFile(file) {
     if (empId && seen.has(empId.toLowerCase()))
       problems.push(`Employee ID repeats row ${seen.get(empId.toLowerCase())}`);
 
-    // Excel turns long account numbers into 3.01235E+13 unless the column
-    // is formatted as Text. Catch it here rather than saving a broken number.
-    const acRaw = cell(row, 'account_no');
+    // Excel only holds 15 significant digits. A 14-digit account number
+    // displayed as 5.01008E+13 is fine — the digits are still there. A 16+
+    // digit one stored as a number has genuinely lost its tail.
+    const acRaw = cell(r, 'account_no');
+    const acWasNumber = typeof gridR[r]?.[cols['account_no']] === 'number';
     if (/e\+/i.test(acRaw))
-      problems.push('account number lost its digits — format that column as Text in Excel');
+      problems.push('account number unreadable — format that column as Text in Excel');
+    else if (acWasNumber && acRaw.replace(/\D/g, '').length > 15)
+      problems.push('account number is too long for Excel to hold as a number — format that column as Text and re-enter it');
 
     if (problems.length) { bad.push({ line: r + 1, empId, name, why: problems.join(', ') }); continue; }
     seen.set(empId.toLowerCase(), r + 1);
 
-    const d = normKey(cell(row, 'designation'));
-    const st = normKey(cell(row, 'active'));
-
-    good.push({
-      emp_id: empId,
-      name,
-      bank_name: cell(row, 'bank_name'),
-      account_no: acRaw,
-      ifsc: cell(row, 'ifsc').toUpperCase(),
-      area,
-      designation: (d.startsWith('part') || d === 'pt') ? 'Part Time' : 'Full Time',
-      monthly_salary: salary,
-      active: !(st.startsWith('inactive') || st === 'no' || st === 'false' || st === '0'),
-      _existing: byEmpId.has(empId.toLowerCase()),
-    });
+    // Only send columns the sheet actually has. Anything absent is left
+    // untouched on existing staff instead of being wiped.
+    const rec = { emp_id: empId, name, area, monthly_salary: salary };
+    if (has('bank_name'))  rec.bank_name  = cell(r, 'bank_name');
+    if (has('account_no')) rec.account_no = acRaw;
+    if (has('ifsc'))       rec.ifsc       = cell(r, 'ifsc').toUpperCase();
+    if (has('designation')) rec.designation = cell(r, 'designation');
+    if (has('emp_type')) {
+      const t = normKey(cell(r, 'emp_type'));
+      rec.emp_type = (t.startsWith('part') || t === 'pt') ? 'Part Time' : 'Full Time';
+    }
+    if (has('active')) {
+      const st = normKey(cell(r, 'active'));
+      rec.active = !(st.startsWith('inactive') || st === 'no' || st === 'false' || st === '0');
+    }
+    rec._existing = byEmpId.has(empId.toLowerCase());
+    good.push(rec);
   }
 
   showPreview(good, bad);
@@ -688,7 +735,7 @@ async function handleFile(file) {
 function showPreview(good, bad) {
   const adds = good.filter((g) => !g._existing).length;
   const upds = good.filter((g) => g._existing).length;
-  const total = good.reduce((s, g) => s + (g.active ? g.monthly_salary : 0), 0);
+  const total = good.reduce((s, g) => s + (g.active === false ? 0 : g.monthly_salary), 0);
 
   openModal('Check before importing', `
     <div style="margin-bottom:14px">
@@ -700,15 +747,18 @@ function showPreview(good, bad) {
     ${good.length ? `
       <div class="preview">
         <table><thead><tr>
-          <th>Employee</th><th>Area</th><th>Designation</th>
+          <th>Employee</th><th>Area</th><th>Designation</th><th>Type</th>
           <th class="r">Salary</th><th>Status</th><th></th>
         </tr></thead><tbody>
         ${good.map((g) => `<tr>
           <td><div style="font-weight:500">${esc(g.name)}</div><div class="sub">${esc(g.emp_id)}</div></td>
           <td>${esc(g.area)}</td>
-          <td><span class="tag ${g.designation === 'Full Time' ? 'tag-ft' : 'tag-pt'}">${esc(g.designation)}</span></td>
+          <td>${esc(g.designation ?? '—')}</td>
+          <td>${g.emp_type
+                ? `<span class="tag ${g.emp_type === 'Full Time' ? 'tag-ft' : 'tag-pt'}">${esc(g.emp_type)}</span>`
+                : '<span class="sub">unchanged</span>'}</td>
           <td class="r mono">${money(g.monthly_salary)}</td>
-          <td class="sub">${g.active ? 'Active' : 'Inactive'}</td>
+          <td class="sub">${g.active === undefined ? 'unchanged' : (g.active ? 'Active' : 'Inactive')}</td>
           <td class="sub">${g._existing ? 'update' : 'new'}</td>
         </tr>`).join('')}
         </tbody></table>
@@ -764,8 +814,8 @@ $('exportBtn').onclick = () => {
   const q = (x) => `"${String(x ?? '').replace(/"/g, '""')}"`;
   const lines = [TEMPLATE_HEADERS.join(',')];
   rows.forEach((e) => lines.push([e.emp_id, e.name, e.bank_name, e.account_no, e.ifsc,
-    e.area, e.designation, Number(e.monthly_salary || 0), e.active ? 'Active' : 'Inactive']
-    .map(q).join(',')));
+    e.area, e.designation, e.emp_type, Number(e.monthly_salary || 0),
+    e.active ? 'Active' : 'Inactive'].map(q).join(',')));
   const total = rows.filter((e) => e.active)
     .reduce((s, e) => s + Number(e.monthly_salary || 0), 0);
   lines.push('', `${q('Total monthly payout (active, ' + filterLabel() + ')')},${total}`);
@@ -774,21 +824,84 @@ $('exportBtn').onclick = () => {
   openModal('Export staff list', `
     <p style="margin:0 0 4px;font-size:14px">${rows.length} employee${rows.length === 1 ? '' : 's'} · ${esc(filterLabel())}</p>
     <p class="mono" style="margin:0 0 14px;color:var(--green)">Payout ${money(total)}</p>
-    <textarea class="csv" readonly>${esc(csv)}</textarea>
-    <p class="note">The columns match the import format, so you can export, edit in Excel, and import straight back.</p>
+
+    <p style="font-size:14px;margin:0 0 14px">
+      Use the Excel file for anything involving account numbers. Employee ID,
+      Account No and IFSC are written as text, so Excel leaves them exactly as
+      they are — no leading zeros dropped, no 5.01008E+13.
+    </p>
+
+    <details style="margin-bottom:14px">
+      <summary style="cursor:pointer;font-size:13px;color:var(--ink-soft)">Show the raw CSV text</summary>
+      <textarea class="csv" readonly style="margin-top:10px">${esc(csv)}</textarea>
+      <p class="note">Fine for pasting into other systems, but don't open it in Excel —
+      Excel will reformat the account numbers on the way in.</p>
+    </details>
+
+    <div id="exportErr" class="err hidden"></div>
     <div class="foot">
       <button class="btn btn-ghost" data-close>Close</button>
-      <button class="btn btn-dark" id="dlBtn">Download CSV</button>
+      <button class="btn btn-ghost" id="dlCsvBtn">Download CSV</button>
+      <button class="btn btn-green" id="dlXlsxBtn">Download Excel</button>
     </div>`);
 
-  document.querySelector('textarea.csv').onfocus = (e) => e.target.select();
-  $('dlBtn').onclick = () => {
+  $('dlCsvBtn').onclick = () => {
     const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8;' }));
     const a = document.createElement('a');
     a.href = url;
     a.download = `staff-${new Date().toISOString().slice(0, 10)}.csv`;
     a.click();
     URL.revokeObjectURL(url);
+  };
+
+  $('dlXlsxBtn').onclick = async () => {
+    const btn = $('dlXlsxBtn');
+    btn.disabled = true; btn.textContent = 'Building…';
+    try {
+      const XLSX = await loadSheetJS();
+
+      const aoa = [TEMPLATE_HEADERS];
+      rows.forEach((e) => aoa.push([
+        String(e.emp_id ?? ''),
+        String(e.name ?? ''),
+        String(e.bank_name ?? ''),
+        String(e.account_no ?? ''),
+        String(e.ifsc ?? ''),
+        String(e.area ?? ''),
+        String(e.designation ?? ''),
+        String(e.emp_type ?? ''),
+        Number(e.monthly_salary || 0),
+        e.active ? 'Active' : 'Inactive',
+      ]));
+      aoa.push([]);
+      aoa.push([`Total monthly payout (active, ${filterLabel()})`, '', '', '', '', '', '', '', total, '']);
+
+      const ws = XLSX.utils.aoa_to_sheet(aoa);
+
+      // Force the identifier columns to real text cells so Excel cannot
+      // turn a 14-digit account number back into scientific notation.
+      const textCols = ['A', 'D', 'E'];   // Employee ID, Account No, IFSC
+      for (let r = 2; r <= aoa.length; r++) {
+        textCols.forEach((col) => {
+          const c = ws[col + r];
+          if (c && c.v !== '') { c.t = 's'; c.v = String(c.v); c.z = '@'; }
+        });
+      }
+
+      ws['!cols'] = [{ wch: 12 }, { wch: 24 }, { wch: 20 }, { wch: 24 }, { wch: 14 },
+                     { wch: 12 }, { wch: 20 }, { wch: 14 }, { wch: 14 }, { wch: 10 }];
+
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'Staff');
+      XLSX.writeFile(wb, `staff-${new Date().toISOString().slice(0, 10)}.xlsx`);
+
+      btn.disabled = false; btn.textContent = 'Download Excel';
+    } catch (err) {
+      btn.disabled = false; btn.textContent = 'Try again';
+      const e2 = $('exportErr');
+      e2.textContent = `Couldn't build the Excel file: ${err.message}`;
+      e2.classList.remove('hidden');
+    }
   };
 };
 
