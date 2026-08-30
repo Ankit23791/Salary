@@ -1289,9 +1289,29 @@ async function parseSheet(kind, file) {
   if (!gridF || gridF.length < 2)
     return alert('That sheet looks empty. It needs a heading row plus at least one row of data.');
 
+  // The heading row isn't always the first row — exports often start with a
+  // title and a blank line. Score the first 15 rows and take the best one.
+  const scoreRow = (row) => (row || []).map(normKey).reduce((n, h) => {
+    if (!h) return n;
+    if (cfg.map[h]) return n + 1;
+    if (cfg.dayGrid && /^(\d{1,2})(mo|tu|we|th|fr|sa|su)?$/.test(h)) return n + 1;
+    return n;
+  }, 0);
+
+  let hdr = 0, best = -1;
+  for (let r = 0; r < Math.min(15, gridF.length); r++) {
+    const sc = scoreRow(gridF[r]);
+    if (sc > best) { best = sc; hdr = r; }
+  }
+  if (best < 2)
+    return headingError(cfg,
+      "Couldn't find a heading row in this file.",
+      'The sheet needs a row of column headings, with the employee rows underneath it.',
+      (gridF[0] || []).map((h) => String(h ?? '').trim()).filter(Boolean));
+
   const cols = {};
   const dayCols = {};                       // { 1: colIndex, 2: colIndex, ... }
-  gridF[0].map(normKey).forEach((h, i) => {
+  gridF[hdr].map(normKey).forEach((h, i) => {
     const f = cfg.map[h];
     if (f && cols[f] === undefined) { cols[f] = i; return; }
     // day-grid headings look like "1", "1We", "15Tu" — the day number leads
@@ -1307,8 +1327,8 @@ async function parseSheet(kind, file) {
   const nice = { emp_id: 'Employee ID', name: 'Employee Name', amount: 'Amount', date: 'Date' };
   const missing = cfg.need.filter((f) => cols[f] !== undefined ? false : f !== 'emp_id');
   if (missing.length) {
-    const found = gridF[0].map((h) => String(h ?? '').replace(/\s+/g, ' ').trim())
-                          .filter(Boolean);
+    const found = gridF[hdr].map((h) => String(h ?? '').replace(/\s+/g, ' ').trim())
+                            .filter(Boolean);
     return headingError(cfg,
       `Missing column${missing.length > 1 ? 's' : ''}: <b>${missing.map((m) => esc(nice[m] || m)).join(', ')}</b>.`,
       'The first row of the sheet has to be the column headings.',
@@ -1316,8 +1336,8 @@ async function parseSheet(kind, file) {
   }
 
   if (!cfg.noEmp && cols.emp_id === undefined) {
-    const found = gridF[0].map((h) => String(h ?? '').replace(/\s+/g, ' ').trim())
-                          .filter(Boolean);
+    const found = gridF[hdr].map((h) => String(h ?? '').replace(/\s+/g, ' ').trim())
+                            .filter(Boolean);
     return headingError(cfg,
       'This sheet has no <b>Employee ID</b> column, so nothing can be uploaded.',
       `Rows are matched to people by Employee ID only — never by name, because
@@ -1339,7 +1359,7 @@ async function parseSheet(kind, file) {
   const known = new Map(staff.map((e) => [String(e.emp_id).toLowerCase(), e]));
   const good = [], bad = [];
 
-  for (let r = 1; r < gridF.length; r++) {
+  for (let r = hdr + 1; r < gridF.length; r++) {
     if (!gridF[r] || gridF[r].every((c) => String(c ?? '').trim() === '')) continue;
 
     const rec = {};
@@ -1405,6 +1425,23 @@ async function parseSheet(kind, file) {
       nameWarn,
       data: rec,
     });
+  }
+
+  // Catch the classic mistake: a serial-number column relabelled "Employee ID".
+  // Sequential 1,2,3… will still match real employees by accident and pay the
+  // wrong people, so it has to be refused rather than warned about.
+  if (!cfg.noEmp && good.length >= 5) {
+    const ids = good.map((g) => g.emp_id);
+    const looksSerial = ids.every((v, i) => String(v) === String(i + 1));
+    if (looksSerial) {
+      const mismatch = good.filter((g) => g.nameWarn).length;
+      return headingError(cfg,
+        'The <b>Employee ID</b> column contains 1, 2, 3, … — these are row numbers, not employee IDs.',
+        `Uploading this would attach rows to whoever happens to hold IDs 1, 2, 3
+         in the register${mismatch ? ` — ${mismatch} row${mismatch === 1 ? ' already disagrees' : 's already disagree'} with the name on that ID` : ''}.
+         The export needs to output each person's real Employee ID.`,
+        gridF[hdr].map((h) => String(h ?? '').replace(/\s+/g, ' ').trim()).filter(Boolean));
+    }
   }
 
   previewSheet(kind, file.name, good, bad);
