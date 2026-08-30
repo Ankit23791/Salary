@@ -1248,7 +1248,42 @@ function showAllFormats() {
 async function downloadTemplate(kind) {
   const cfg = SHEET_KINDS[kind];
   const XLSX = await loadSheetJS();
-  const aoa = [cfg.headers, ...cfg.sample];
+
+  let headers = cfg.headers, sample = cfg.sample, suffix = '';
+
+  // The day grid depends on the month: how many days, and which weekday each
+  // date is. Build those headings from the calendar so they read "1 We", "5 Su".
+  if (cfg.dayGrid) {
+    const now = new Date();
+    const period = currentRun?.period ||
+      `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    const cal = monthCalendar(period);
+    const cap = (w) => w.charAt(0).toUpperCase() + w.slice(1);
+    const dayHdrs = Array.from({ length: cal.days },
+      (_, i) => `${i + 1}\n${cap(cal.weekday[i + 1])}`);
+
+    const pre  = ['Employee ID', 'Employee Name', 'Designation', 'Area'];
+    const tail = ['Total Days', 'Present', 'Week Off', 'Paid Leaves', 'Absent',
+                  'Paid Holiday', 'Extra Days', 'OT Hours'];
+    headers = [...pre, ...dayHdrs, ...tail];
+
+    // sample rows: present all month except Sundays off
+    const mk = (id, name, desig, area) => {
+      const codes = Array.from({ length: cal.days },
+        (_, i) => (cal.weekday[i + 1] === 'su' ? 'Off' : 'P'));
+      const present = codes.filter((c) => c === 'P').length;
+      const off = codes.filter((c) => c === 'Off').length;
+      return [id, name, desig, area, ...codes,
+              cal.days, present, off, 0, 0, 0, 0, 0];
+    };
+    sample = [
+      mk('6', 'Tushar Lakhmani', 'Customer Executive', 'Office'),
+      mk('8', 'Sachin Kumar', 'Warehouse Incharge', 'Sector 101'),
+    ];
+    suffix = '-' + period;
+  }
+
+  const aoa = [headers, ...sample];
   const ws = XLSX.utils.aoa_to_sheet(aoa);
 
   // keep ID columns as text so Excel never reformats them
@@ -1258,11 +1293,19 @@ async function downloadTemplate(kind) {
       if (c && c.v !== '') { c.t = 's'; c.v = String(c.v); c.z = '@'; }
     });
   }
-  ws['!cols'] = cfg.headers.map((h) => ({ wch: Math.max(12, h.length + 4) }));
+  ws['!cols'] = headers.map((h) => ({ wch: cfg.dayGrid && /^\d/.test(h) ? 6
+                                                : Math.max(12, h.length + 4) }));
+
+  // day headings hold a line break, so let Excel wrap them
+  headers.forEach((h, i) => {
+    if (!String(h).includes('\n')) return;
+    const c = ws[XLSX.utils.encode_col(i) + '1'];
+    if (c) c.s = { alignment: { wrapText: true, horizontal: 'center' } };
+  });
 
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, cfg.label);
-  XLSX.writeFile(wb, `${kind}-template.xlsx`);
+  XLSX.writeFile(wb, `${kind}-template${suffix}.xlsx`);
 }
 
 /* ---------------------------- uploading ---------------------------- */
