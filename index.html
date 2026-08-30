@@ -244,7 +244,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
    Project Settings → API Keys. Use the anon / publishable key.
    =================================================================== */
 const SUPABASE_URL = 'https://vphmuuhnfqluvhtdpbhb.supabase.co';
-const SUPABASE_ANON_KEY = 'sb_publishable_2hAro_6cC50VDF77uiQHTw_QohUNhKe';
+const SUPABASE_ANON_KEY = 'PASTE_YOUR_PUBLISHABLE_KEY_HERE';
 
 const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
@@ -946,6 +946,7 @@ const SHEET_KINDS = {
   attendance: {
     label: 'Attendance',
     note: 'The day grid from the attendance app. First column must be headed Employee ID.',
+    footnote: 'Paid leave is taken from the paid-leave sheet, not from this one.',
     headersShort: ['Employee ID', 'Employee Name', 'Designation', 'Area',
                    '1 … 31 (day codes)', 'Total Days', 'Present', 'Week Off',
                    'Paid Leaves', 'Absent', 'Paid Holiday', 'Extra Days', 'OT Hours'],
@@ -982,6 +983,25 @@ const SHEET_KINDS = {
     show: [['emp_id', 'ID'], ['name', 'Name'], ['present', 'Present'],
            ['absent', 'Absent'], ['week_off', 'Off'], ['paid_leaves', 'Leave'],
            ['extra_days', 'Extra'], ['ot_hours', 'OT hrs']],
+  },
+
+  paid_leave: {
+    label: 'Paid leave',
+    note: 'Leave approved by a senior. This is what counts as paid — not the attendance sheet.',
+    headers: ['Employee ID', 'Employee Name', 'Paid Leave Approved'],
+    sample: [['6', 'Tushar Lakhmani', 2], ['8', 'Sachin Kumar', 1]],
+    textCols: ['A'],
+    map: {
+      employeeid: 'emp_id', empid: 'emp_id', id: 'emp_id',
+      employeename: 'name', empolyeename: 'name', name: 'name',
+      paidleaveapproved: 'days', noofpaidleaveapproved: 'days',
+      noofpaidleave: 'days', paidleaves: 'days', paidleave: 'days',
+      approvedleave: 'days', approved: 'days', days: 'days', leave: 'days',
+    },
+    need: ['emp_id', 'days'],
+    numeric: ['days'],
+    positive: ['days'],
+    show: [['emp_id', 'ID'], ['name', 'Name'], ['days', 'Days approved']],
   },
 
   incentive: {
@@ -1091,7 +1111,7 @@ function renderRunList() {
       <div>
         <div class="eyebrow">Monthly payroll</div>
         <div style="font-size:15px;margin-top:4px">
-          Upload the five sheets for a month, then check them here.
+          Upload each month's sheets here, then check them.
         </div>
       </div>
       <div style="display:flex;gap:8px">
@@ -1191,6 +1211,7 @@ function renderRun() {
         <div class="sheet">
           <h3><span class="dot ${dot}"></span>${esc(cfg.label)} sheet</h3>
           <div class="sub" style="margin-left:15px">${esc(cfg.note)}</div>
+          ${cfg.footnote ? `<div class="sub" style="margin-left:15px;color:var(--amber)">${esc(cfg.footnote)}</div>` : ''}
 
           <div class="fieldlist cols">${(cfg.headersShort || cfg.headers).map(esc).join(' · ')}</div>
 
@@ -1225,7 +1246,8 @@ function renderRun() {
 function showAllFormats() {
   openModal('Sheet formats', `
     <p style="margin:0 0 16px;font-size:14px">
-      Five sheets per month. Column headings can be spelled loosely, but the
+      ${Object.keys(SHEET_KINDS).length} sheets per month. Column headings can be
+      spelled loosely, but the
       columns below need to be there. Employee ID is what links a row to a
       person — always include it, and format that column as <b>Text</b> in
       Excel so account-style IDs keep any leading zeros.
