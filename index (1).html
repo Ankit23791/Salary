@@ -1,0 +1,553 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>RapidSurge Payroll</title>
+<style>
+  :root{
+    --ink:#1B2A2F; --ink-soft:#3D5158; --muted:#7A8C90;
+    --paper:#EFF1EE; --card:#fff; --line:#D7DDD9;
+    --green:#0F7B5F; --green-soft:#E3F1EC;
+    --amber:#9A6410; --amber-soft:#F6EEDD;
+    --rose:#9E3B3B;  --rose-soft:#F5E5E5;
+    --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--paper);color:var(--ink);
+       font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;font-size:15px}
+  .wordmark{font-family:Georgia,"Times New Roman",serif;letter-spacing:-.5px}
+  .mono{font-family:var(--mono)}
+  .eyebrow{font-family:var(--mono);font-size:11px;text-transform:uppercase;
+           letter-spacing:.12em;color:var(--ink-soft)}
+  .hidden{display:none !important}
+
+  /* login */
+  #login{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
+  #login .box{width:100%;max-width:380px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:10px}
+  input,select,textarea{width:100%;padding:9px 11px;border:1px solid var(--line);
+      border-radius:6px;font-size:14px;color:var(--ink);background:#fff;font-family:inherit}
+  input:focus,select:focus,textarea:focus{outline:2px solid var(--green);outline-offset:-1px}
+  label.f{display:block;margin:0 0 6px}
+  .btn{border:0;border-radius:6px;padding:9px 16px;font-size:14px;cursor:pointer;
+       display:inline-flex;align-items:center;gap:6px;font-family:inherit}
+  .btn-dark{background:var(--ink);color:#fff}
+  .btn-green{background:var(--green);color:#fff;font-weight:500}
+  .btn-rose{background:var(--rose);color:#fff}
+  .btn-ghost{background:#fff;border:1px solid var(--line);color:var(--ink)}
+  .btn:disabled{opacity:.5;cursor:not-allowed}
+  .err{color:var(--rose);font-size:13.5px;margin-top:12px}
+
+  /* header */
+  header{background:var(--ink)}
+  .bar{max-width:1120px;margin:0 auto;padding:12px 20px;display:flex;
+       align-items:center;justify-content:space-between;gap:16px}
+  .bar .wordmark{color:#fff;font-size:22px}
+  .whoami{font-family:var(--mono);font-size:11px;background:#2C4046;color:#CFE0DA;
+          padding:4px 9px;border-radius:5px}
+  .linkbtn{background:none;border:0;color:#fff;opacity:.75;cursor:pointer;
+           font-size:14px;font-family:inherit}
+  .linkbtn:hover{opacity:1}
+
+  main{max-width:1120px;margin:0 auto;padding:24px 20px 60px}
+
+  /* payout strip */
+  .strip{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:flex-end;
+         gap:20px;padding:18px 20px;margin-bottom:20px}
+  .payout{font-family:var(--mono);font-size:44px;color:var(--green);line-height:1.05}
+  .note{font-size:12px;color:var(--muted);margin-top:6px}
+  .stats{display:flex;gap:26px;font-family:var(--mono)}
+  .stats .n{font-size:22px}
+  .stats .l{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--ink-soft)}
+
+  /* controls */
+  .controls{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px}
+  .controls input,.controls select{width:auto}
+  .controls .search{flex:1;min-width:200px}
+
+  /* table */
+  table{width:100%;border-collapse:collapse;font-size:14px;background:var(--card)}
+  thead th{background:#F5F7F5;text-align:left;font-weight:400;padding:10px 14px;
+           font-family:var(--mono);font-size:11px;text-transform:uppercase;
+           letter-spacing:.08em;color:var(--ink-soft);white-space:nowrap}
+  tbody td{padding:12px 14px;border-top:1px solid var(--line);vertical-align:top}
+  tbody tr.off{opacity:.55}
+  .r{text-align:right}
+  .tag{display:inline-block;font-family:var(--mono);font-size:11px;
+       padding:4px 8px;border-radius:5px;border:1px solid transparent}
+  .tag-ft{background:var(--green-soft);color:var(--green)}
+  .tag-pt{background:var(--amber-soft);color:var(--amber)}
+  .tag-on{background:var(--green-soft);color:var(--green);border-color:var(--green);cursor:pointer}
+  .tag-off{background:var(--rose-soft);color:var(--rose);cursor:pointer}
+  .sub{font-family:var(--mono);font-size:11.5px;color:var(--ink-soft)}
+  .iconbtn{background:none;border:0;cursor:pointer;font-size:14px;padding:4px 6px;border-radius:5px}
+  .iconbtn:hover{background:#F0F2F0}
+  .wrap{overflow-x:auto;border:1px solid var(--line);border-radius:10px}
+  .empty{padding:56px 20px;text-align:center;color:var(--muted);font-size:14px;background:var(--card)}
+
+  /* modal */
+  .veil{position:fixed;inset:0;background:rgba(27,42,47,.45);display:flex;
+        align-items:flex-start;justify-content:center;padding:16px;overflow-y:auto;z-index:50}
+  .modal{background:#fff;border-radius:10px;width:100%;max-width:640px;margin:32px 0}
+  .modal.sm{max-width:420px}
+  .modal .head{display:flex;align-items:center;justify-content:space-between;
+               padding:14px 20px;border-bottom:1px solid var(--line)}
+  .modal .head h2{margin:0;font-family:Georgia,serif;font-size:19px;font-weight:400}
+  .modal .body{padding:20px}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  .foot{display:flex;justify-content:flex-end;gap:8px;margin-top:20px}
+  .seg{display:flex;gap:8px}
+  .seg button{flex:1;padding:9px;border:1px solid var(--line);background:#fff;
+              border-radius:6px;cursor:pointer;font-size:14px;color:var(--ink-soft);font-family:inherit}
+  .seg button.on{border-color:var(--green);background:var(--green-soft);color:var(--green)}
+  .check{display:flex;align-items:center;gap:8px;margin-top:16px;font-size:14px;cursor:pointer}
+  .check input{width:auto}
+  textarea.csv{height:220px;font-family:var(--mono);font-size:11.5px;resize:vertical}
+
+  @media(max-width:640px){
+    .grid2{grid-template-columns:1fr}
+    .payout{font-size:34px}
+    .stats{gap:18px}
+    .whoami{display:none}
+  }
+</style>
+</head>
+<body>
+
+<!-- ------------------------------ LOGIN ------------------------------ -->
+<section id="login">
+  <div class="box">
+    <div style="margin-bottom:26px">
+      <div class="wordmark" style="font-size:34px">RapidSurge Payroll</div>
+      <div class="eyebrow" style="margin-top:4px">Staff &amp; salary register</div>
+    </div>
+    <div class="card" style="padding:22px">
+      <label class="f eyebrow" for="email">Email</label>
+      <input id="email" type="email" autocomplete="username" placeholder="you@example.com" />
+      <label class="f eyebrow" for="password" style="margin-top:16px">Password</label>
+      <input id="password" type="password" autocomplete="current-password" placeholder="••••••••" />
+      <div id="loginErr" class="err hidden"></div>
+      <button id="loginBtn" class="btn btn-dark" style="width:100%;justify-content:center;margin-top:20px">
+        Open register
+      </button>
+    </div>
+    <p class="note" style="margin-top:16px">
+      Accounts are created in Supabase. Ask the main account holder to add you.
+    </p>
+  </div>
+</section>
+
+<!-- ------------------------------ APP -------------------------------- -->
+<div id="app" class="hidden">
+  <header>
+    <div class="bar">
+      <div style="display:flex;align-items:baseline;gap:12px">
+        <span class="wordmark">RapidSurge Payroll</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:14px">
+        <span id="whoami" class="whoami"></span>
+        <button id="logoutBtn" class="linkbtn">Sign out</button>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <section class="card strip">
+      <div>
+        <div class="eyebrow" id="payoutLabel">Monthly payout</div>
+        <div class="payout" id="payout">₹0</div>
+        <div class="note">Active staff only. Inactive staff stay on file but drop out of the total.</div>
+      </div>
+      <div class="stats">
+        <div><div class="n" id="sListed">0</div><div class="l">Listed</div></div>
+        <div><div class="n" id="sActive">0</div><div class="l">Active</div></div>
+        <div><div class="n" id="sFull">0</div><div class="l">Full time</div></div>
+        <div><div class="n" id="sPart">0</div><div class="l">Part time</div></div>
+      </div>
+    </section>
+
+    <div class="controls">
+      <input class="search" id="q" placeholder="Search name, ID, bank, account" />
+      <select id="fArea"><option value="all">All areas</option></select>
+      <select id="fDesig">
+        <option value="all">All designations</option>
+        <option value="Full Time">Full time</option>
+        <option value="Part Time">Part time</option>
+      </select>
+      <select id="fStatus">
+        <option value="all">Active + inactive</option>
+        <option value="active">Active only</option>
+        <option value="inactive">Inactive only</option>
+      </select>
+      <button id="clearBtn" class="btn btn-ghost hidden">Clear filters</button>
+      <button id="exportBtn" class="btn btn-ghost">Export</button>
+      <button id="addBtn" class="btn btn-green hidden">+ Add employee</button>
+    </div>
+
+    <div class="wrap" id="tableWrap"></div>
+    <p class="note" id="footNote" style="margin-top:10px"></p>
+  </main>
+</div>
+
+<div id="modalHost"></div>
+
+<script type="module">
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+
+/* ===================================================================
+   1. PASTE YOUR SUPABASE PROJECT DETAILS HERE
+   Supabase → Project Settings → API
+   The anon key is safe to publish: row level security protects the data.
+   =================================================================== */
+const SUPABASE_URL = 'https://YOUR-PROJECT.supabase.co';
+const SUPABASE_ANON_KEY = 'YOUR-ANON-KEY';
+
+const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+/* ------------------------------ state ------------------------------ */
+let profile = null;          // { full_name, role }
+let staff = [];
+const filters = { q: '', area: 'all', desig: 'all', status: 'all' };
+const isMain = () => profile?.role === 'main';
+
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) =>
+  ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const money = (n) => new Intl.NumberFormat('en-IN',
+  { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(Number(n) || 0);
+
+/* ------------------------------ auth ------------------------------- */
+$('loginBtn').onclick = signIn;
+$('password').onkeydown = (e) => { if (e.key === 'Enter') signIn(); };
+$('email').onkeydown = (e) => { if (e.key === 'Enter') $('password').focus(); };
+$('logoutBtn').onclick = async () => { await sb.auth.signOut(); location.reload(); };
+
+async function signIn() {
+  const btn = $('loginBtn'), errEl = $('loginErr');
+  errEl.classList.add('hidden');
+  btn.disabled = true; btn.textContent = 'Checking…';
+  const { error } = await sb.auth.signInWithPassword({
+    email: $('email').value.trim(),
+    password: $('password').value,
+  });
+  btn.disabled = false; btn.textContent = 'Open register';
+  if (error) {
+    errEl.textContent = "That email and password don't match. Try again.";
+    errEl.classList.remove('hidden');
+    return;
+  }
+  await start();
+}
+
+async function start() {
+  const { data: { user } } = await sb.auth.getUser();
+  if (!user) return;
+
+  const { data: p } = await sb.from('profiles')
+    .select('full_name, role').eq('id', user.id).single();
+  profile = p || { full_name: user.email, role: 'secondary' };
+
+  $('login').classList.add('hidden');
+  $('app').classList.remove('hidden');
+  $('whoami').textContent =
+    `${profile.full_name} · ${isMain() ? 'main account' : 'view only'}`;
+  $('addBtn').classList.toggle('hidden', !isMain());
+
+  await load();
+}
+
+/* ------------------------------ data ------------------------------- */
+async function load() {
+  const { data, error } = await sb.from('employees').select('*').order('name');
+  if (error) {
+    $('tableWrap').innerHTML =
+      `<div class="empty">Couldn't load the register: ${esc(error.message)}</div>`;
+    return;
+  }
+  staff = data || [];
+  refreshAreas();
+  render();
+}
+
+function refreshAreas() {
+  const sel = $('fArea'), current = sel.value;
+  const areas = [...new Set(staff.map((e) => e.area).filter(Boolean))].sort();
+  sel.innerHTML = '<option value="all">All areas</option>' +
+    areas.map((a) => `<option value="${esc(a)}">${esc(a)}</option>`).join('');
+  sel.value = areas.includes(current) ? current : 'all';
+  filters.area = sel.value;
+}
+
+function visible() {
+  const n = filters.q.trim().toLowerCase();
+  return staff.filter((e) => {
+    if (filters.area !== 'all' && e.area !== filters.area) return false;
+    if (filters.desig !== 'all' && e.designation !== filters.desig) return false;
+    if (filters.status === 'active' && !e.active) return false;
+    if (filters.status === 'inactive' && e.active) return false;
+    if (n) {
+      const hay = `${e.emp_id} ${e.name} ${e.area} ${e.bank_name} ${e.account_no} ${e.ifsc}`.toLowerCase();
+      if (!hay.includes(n)) return false;
+    }
+    return true;
+  });
+}
+
+function filterLabel() {
+  return [
+    filters.area === 'all' ? null : filters.area,
+    filters.desig === 'all' ? null : filters.desig,
+    filters.status === 'all' ? 'all staff' : filters.status,
+  ].filter(Boolean).join(' · ');
+}
+
+/* ----------------------------- render ------------------------------ */
+function render() {
+  const rows = visible();
+  const active = rows.filter((e) => e.active);
+
+  $('payoutLabel').textContent = `Monthly payout — ${filterLabel()}`;
+  $('payout').textContent = money(active.reduce((s, e) => s + Number(e.monthly_salary || 0), 0));
+  $('sListed').textContent = rows.length;
+  $('sActive').textContent = active.length;
+  $('sFull').textContent = active.filter((e) => e.designation === 'Full Time').length;
+  $('sPart').textContent = active.filter((e) => e.designation === 'Part Time').length;
+
+  const dirty = filters.q || filters.area !== 'all' || filters.desig !== 'all' || filters.status !== 'all';
+  $('clearBtn').classList.toggle('hidden', !dirty);
+
+  $('footNote').textContent =
+    `${staff.length} employee${staff.length === 1 ? '' : 's'} on file` +
+    (isMain() ? '' : ' · secondary account, entries are read only');
+
+  if (!rows.length) {
+    $('tableWrap').innerHTML = `<div class="empty">${
+      staff.length
+        ? 'No employee matches these filters. Clear them to see the full register.'
+        : (isMain()
+            ? 'The register is empty. Add your first employee to start.'
+            : 'The register is empty. The main account needs to add staff first.')
+    }</div>`;
+    return;
+  }
+
+  $('tableWrap').innerHTML = `
+    <table>
+      <thead><tr>
+        <th>Employee</th><th>Bank details</th><th>Area</th><th>Designation</th>
+        <th class="r">Monthly salary</th><th>Status</th>${isMain() ? '<th class="r">Edit</th>' : ''}
+      </tr></thead>
+      <tbody>${rows.map(rowHtml).join('')}</tbody>
+    </table>`;
+
+  $('tableWrap').querySelectorAll('[data-toggle]').forEach((b) => {
+    b.onclick = () => toggleActive(b.dataset.toggle);
+  });
+  $('tableWrap').querySelectorAll('[data-edit]').forEach((b) => {
+    b.onclick = () => openForm(staff.find((e) => e.id === b.dataset.edit));
+  });
+  $('tableWrap').querySelectorAll('[data-del]').forEach((b) => {
+    b.onclick = () => confirmDelete(staff.find((e) => e.id === b.dataset.del));
+  });
+}
+
+function rowHtml(e) {
+  const ft = e.designation === 'Full Time';
+  const status = isMain()
+    ? `<button class="tag ${e.active ? 'tag-on' : 'tag-off'}" data-toggle="${e.id}"
+         title="${e.active ? 'Mark inactive' : 'Mark active'}">${e.active ? 'Active' : 'Inactive'}</button>`
+    : `<span class="tag ${e.active ? 'tag-on' : 'tag-off'}" style="cursor:default">${e.active ? 'Active' : 'Inactive'}</span>`;
+  return `
+    <tr class="${e.active ? '' : 'off'}">
+      <td><div style="font-weight:500">${esc(e.name)}</div><div class="sub">${esc(e.emp_id)}</div></td>
+      <td class="sub"><div style="color:var(--ink)">${esc(e.bank_name || '—')}</div>
+          <div>A/c ${esc(e.account_no || '—')}</div><div>${esc(e.ifsc || '—')}</div></td>
+      <td>${esc(e.area || '—')}</td>
+      <td><span class="tag ${ft ? 'tag-ft' : 'tag-pt'}">${esc(e.designation)}</span></td>
+      <td class="r mono">${money(e.monthly_salary)}</td>
+      <td>${status}</td>
+      ${isMain() ? `<td class="r" style="white-space:nowrap">
+        <button class="iconbtn" data-edit="${e.id}" title="Edit">✎</button>
+        <button class="iconbtn" data-del="${e.id}" title="Remove" style="color:var(--rose)">🗑</button>
+      </td>` : ''}
+    </tr>`;
+}
+
+/* ----------------------------- filters ----------------------------- */
+$('q').oninput = (e) => { filters.q = e.target.value; render(); };
+$('fArea').onchange = (e) => { filters.area = e.target.value; render(); };
+$('fDesig').onchange = (e) => { filters.desig = e.target.value; render(); };
+$('fStatus').onchange = (e) => { filters.status = e.target.value; render(); };
+$('clearBtn').onclick = () => {
+  filters.q = ''; filters.area = 'all'; filters.desig = 'all'; filters.status = 'all';
+  $('q').value = ''; $('fArea').value = 'all'; $('fDesig').value = 'all'; $('fStatus').value = 'all';
+  render();
+};
+
+/* ------------------------------ writes ----------------------------- */
+async function toggleActive(id) {
+  const emp = staff.find((e) => e.id === id);
+  const { error } = await sb.from('employees').update({ active: !emp.active }).eq('id', id);
+  if (error) return alert(`Couldn't update ${emp.name}: ${error.message}`);
+  emp.active = !emp.active;
+  render();
+}
+
+function confirmDelete(emp) {
+  openModal('Remove employee', `
+    <p style="margin:0;font-size:14px">Removing <b>${esc(emp.name)}</b> (${esc(emp.emp_id)})
+    deletes the record permanently. To keep the record but stop the salary,
+    mark the employee inactive instead.</p>
+    <div class="foot">
+      <button class="btn btn-ghost" data-close>Keep employee</button>
+      <button class="btn btn-rose" id="doDelete">Remove</button>
+    </div>`, 'sm');
+  $('doDelete').onclick = async () => {
+    const { error } = await sb.from('employees').delete().eq('id', emp.id);
+    if (error) return alert(`Couldn't remove: ${error.message}`);
+    staff = staff.filter((e) => e.id !== emp.id);
+    closeModal(); refreshAreas(); render();
+  };
+}
+
+$('addBtn').onclick = () => openForm(null);
+
+function openForm(emp) {
+  const v = emp || { designation: 'Full Time', active: true };
+  const areas = [...new Set(staff.map((e) => e.area).filter(Boolean))].sort();
+  openModal(emp ? 'Edit employee' : 'Add employee', `
+    <div class="grid2">
+      <div><label class="f eyebrow">Employee ID</label>
+        <input id="fEmpId" class="mono" placeholder="EMP-001" value="${esc(v.emp_id || '')}"></div>
+      <div><label class="f eyebrow">Employee name</label>
+        <input id="fName" placeholder="Full name" value="${esc(v.name || '')}"></div>
+      <div><label class="f eyebrow">Bank name</label>
+        <input id="fBank" placeholder="State Bank of India" value="${esc(v.bank_name || '')}"></div>
+      <div><label class="f eyebrow">Account number</label>
+        <input id="fAcc" class="mono" placeholder="00000000000" value="${esc(v.account_no || '')}"></div>
+      <div><label class="f eyebrow">IFSC code</label>
+        <input id="fIfsc" class="mono" placeholder="SBIN0000123" value="${esc(v.ifsc || '')}"></div>
+      <div><label class="f eyebrow">Area</label>
+        <input id="fAreaIn" list="areaList" placeholder="Rohini" value="${esc(v.area || '')}">
+        <datalist id="areaList">${areas.map((a) => `<option value="${esc(a)}">`).join('')}</datalist></div>
+      <div><label class="f eyebrow">Designation</label>
+        <div class="seg">
+          <button type="button" data-d="Full Time" class="${v.designation === 'Full Time' ? 'on' : ''}">Full time</button>
+          <button type="button" data-d="Part Time" class="${v.designation === 'Part Time' ? 'on' : ''}">Part time</button>
+        </div></div>
+      <div><label class="f eyebrow">Monthly salary (₹)</label>
+        <input id="fSalary" class="mono" type="number" min="0" placeholder="25000"
+          value="${v.monthly_salary != null ? Number(v.monthly_salary) : ''}"></div>
+    </div>
+    <label class="check"><input type="checkbox" id="fActive" ${v.active !== false ? 'checked' : ''}>
+      Active — include this employee in the monthly payout</label>
+    <div id="formErr" class="err hidden"></div>
+    <div class="foot">
+      <button class="btn btn-ghost" data-close>Cancel</button>
+      <button class="btn btn-green" id="saveBtn">${emp ? 'Save changes' : 'Add employee'}</button>
+    </div>`);
+
+  let designation = v.designation || 'Full Time';
+  document.querySelectorAll('.seg button').forEach((b) => {
+    b.onclick = () => {
+      designation = b.dataset.d;
+      document.querySelectorAll('.seg button').forEach((x) => x.classList.toggle('on', x === b));
+    };
+  });
+
+  $('saveBtn').onclick = async () => {
+    const errEl = $('formErr');
+    const show = (m) => { errEl.textContent = m; errEl.classList.remove('hidden'); };
+    const payload = {
+      emp_id: $('fEmpId').value.trim(),
+      name: $('fName').value.trim(),
+      bank_name: $('fBank').value.trim(),
+      account_no: $('fAcc').value.trim(),
+      ifsc: $('fIfsc').value.trim().toUpperCase(),
+      area: $('fAreaIn').value.trim(),
+      designation,
+      monthly_salary: Number($('fSalary').value || 0),
+      active: $('fActive').checked,
+    };
+    if (!payload.emp_id) return show('Employee ID is required.');
+    if (!payload.name) return show('Employee name is required.');
+    if (!payload.area) return show('Area is required — the area filter depends on it.');
+    if ($('fSalary').value === '' || payload.monthly_salary < 0)
+      return show('Enter the monthly salary as a number.');
+
+    $('saveBtn').disabled = true;
+    const q = emp
+      ? sb.from('employees').update(payload).eq('id', emp.id)
+      : sb.from('employees').insert(payload);
+    const { error } = await q;
+    $('saveBtn').disabled = false;
+
+    if (error) {
+      return show(error.code === '23505'
+        ? `Employee ID ${payload.emp_id} is already used by someone else.`
+        : `Couldn't save: ${error.message}`);
+    }
+    closeModal();
+    await load();
+  };
+}
+
+/* ------------------------------ export ----------------------------- */
+$('exportBtn').onclick = () => {
+  const rows = visible();
+  const q = (x) => `"${String(x ?? '').replace(/"/g, '""')}"`;
+  const lines = [['Employee ID', 'Name', 'Bank', 'Account No', 'IFSC', 'Area',
+                  'Designation', 'Monthly Salary', 'Status'].join(',')];
+  rows.forEach((e) => lines.push([e.emp_id, e.name, e.bank_name, e.account_no, e.ifsc,
+    e.area, e.designation, Number(e.monthly_salary || 0), e.active ? 'Active' : 'Inactive']
+    .map(q).join(',')));
+  const total = rows.filter((e) => e.active)
+    .reduce((s, e) => s + Number(e.monthly_salary || 0), 0);
+  lines.push('', `${q('Total monthly payout (active, ' + filterLabel() + ')')},${total}`);
+  const csv = lines.join('\n');
+
+  openModal('Export staff list', `
+    <p style="margin:0 0 4px;font-size:14px">${rows.length} employee${rows.length === 1 ? '' : 's'} · ${esc(filterLabel())}</p>
+    <p class="mono" style="margin:0 0 14px;color:var(--green)">Payout ${money(total)}</p>
+    <textarea class="csv" readonly>${esc(csv)}</textarea>
+    <p class="note">Download the file, or select the text above and paste it into Excel or Google Sheets.</p>
+    <div class="foot">
+      <button class="btn btn-ghost" data-close>Close</button>
+      <button class="btn btn-dark" id="dlBtn">Download CSV</button>
+    </div>`);
+
+  document.querySelector('textarea.csv').onfocus = (e) => e.target.select();
+  $('dlBtn').onclick = () => {
+    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8;' }));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `staff-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+};
+
+/* ------------------------------ modal ------------------------------ */
+function openModal(title, bodyHtml, size = '') {
+  $('modalHost').innerHTML = `
+    <div class="veil">
+      <div class="modal ${size}">
+        <div class="head"><h2>${esc(title)}</h2>
+          <button class="iconbtn" data-close style="font-size:18px">✕</button></div>
+        <div class="body">${bodyHtml}</div>
+      </div>
+    </div>`;
+  $('modalHost').querySelectorAll('[data-close]').forEach((b) => (b.onclick = closeModal));
+  $('modalHost').querySelector('.veil').onclick = (e) => {
+    if (e.target.classList.contains('veil')) closeModal();
+  };
+}
+function closeModal() { $('modalHost').innerHTML = ''; }
+
+/* --------------------------- boot / resume ------------------------- */
+const { data: { session } } = await sb.auth.getSession();
+if (session) await start();
+</script>
+</body>
+</html>
