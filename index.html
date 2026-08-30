@@ -116,6 +116,28 @@
   .preview{max-height:260px;overflow:auto;border:1px solid var(--line);border-radius:8px}
   .badrow{background:var(--rose-soft)}
 
+  /* nav + payroll */
+  .nav{display:flex;gap:4px}
+  .nav button{background:none;border:0;color:#8FA5A9;cursor:pointer;font-size:14px;
+              padding:6px 12px;border-radius:6px;font-family:inherit}
+  .nav button.on{background:#2C4046;color:#fff}
+  .runbar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between;
+          padding:16px 20px;margin-bottom:18px}
+  .sheets{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px}
+  .sheet{border:1px solid var(--line);border-radius:10px;background:var(--card);padding:16px}
+  .sheet h3{margin:0 0 2px;font-size:15px;font-weight:600}
+  .sheet .cols{margin:10px 0 12px}
+  .sheet .acts{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+  .dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:7px;
+       vertical-align:middle}
+  .dot-empty{background:var(--line)}
+  .dot-ok{background:var(--green)}
+  .dot-warn{background:var(--amber)}
+  .runrow{display:flex;justify-content:space-between;align-items:center;gap:12px;
+          padding:12px 16px;border-top:1px solid var(--line);cursor:pointer}
+  .runrow:hover{background:#F5F7F5}
+  .fieldlist{font-family:var(--mono);font-size:11.5px;color:var(--ink-soft);line-height:1.7}
+
   @media(max-width:640px){
     .grid2{grid-template-columns:1fr}
     .payout{font-size:34px}
@@ -153,8 +175,12 @@
 <div id="app" class="hidden">
   <header>
     <div class="bar">
-      <div style="display:flex;align-items:baseline;gap:12px">
+      <div style="display:flex;align-items:center;gap:18px">
         <span class="wordmark">RapidSurge Payroll</span>
+        <nav class="nav">
+          <button id="navStaff" class="on">Staff</button>
+          <button id="navPayroll">Payroll</button>
+        </nav>
       </div>
       <div style="display:flex;align-items:center;gap:14px">
         <span id="whoami" class="whoami"></span>
@@ -164,6 +190,7 @@
   </header>
 
   <main>
+   <div id="staffView">
     <section class="card strip">
       <div>
         <div class="eyebrow" id="payoutLabel">Monthly payout</div>
@@ -200,6 +227,9 @@
 
     <div class="wrap" id="tableWrap"></div>
     <p class="note" id="footNote" style="margin-top:10px"></p>
+   </div>
+
+   <div id="payrollView" class="hidden"></div>
   </main>
 </div>
 
@@ -602,8 +632,9 @@ function openImport() {
 
   const drop = $('drop');
   const fi = $('fileInput');
-  drop.onclick = () => { fi.value = ''; fi.click(); };
-  fi.onchange = () => { if (fi.files[0]) handleFile(fi.files[0]); };
+  function staffPick() { if (fi.files[0]) handleFile(fi.files[0]); }
+  drop.onclick = () => { fi.value = ''; fi.onchange = staffPick; fi.click(); };
+  fi.onchange = staffPick;
   drop.ondragover = (e) => { e.preventDefault(); drop.classList.add('over'); };
   drop.ondragleave = () => drop.classList.remove('over');
   drop.ondrop = (e) => {
@@ -904,6 +935,574 @@ $('exportBtn').onclick = () => {
     }
   };
 };
+
+
+/* =====================================================================
+   PAYROLL — the five monthly input sheets
+   Both accounts can upload. Nothing here touches the employee master.
+   ===================================================================== */
+
+const SHEET_KINDS = {
+  attendance: {
+    label: 'Attendance',
+    note: 'One row per employee, with the month already totalled into days.',
+    headers: ['S.No', 'Employee ID', 'Employee Name', 'Total Days', 'Present',
+              'Week Off', 'Paid Leaves', 'Absent', 'Paid Holiday',
+              'Extra Days', 'Overtime Hours'],
+    sample: [
+      [1, '6',  'Tushar Lakhmani', 31, 27, 4, 0, 0, 0, 0, 0],
+      [2, '8',  'Sachin Kumar',    31, 30, 1, 0, 0, 0, 3, 30],
+    ],
+    textCols: ['B'],
+    map: {
+      employeeid: 'emp_id', empid: 'emp_id', id: 'emp_id',
+      employeename: 'name', empolyeename: 'name', name: 'name',
+      totaldays: 'total_days', present: 'present',
+      weekoff: 'week_off', weekoffs: 'week_off',
+      paidleaves: 'paid_leaves', paidleave: 'paid_leaves', leaves: 'paid_leaves',
+      absent: 'absent', absentdays: 'absent',
+      paidholiday: 'paid_holiday', paidholidays: 'paid_holiday', holiday: 'paid_holiday',
+      extradays: 'extra_days', noofextradays: 'extra_days',
+      overtimehours: 'ot_hours', overtime: 'ot_hours', othours: 'ot_hours',
+    },
+    need: ['emp_id'],
+    numeric: ['total_days', 'present', 'week_off', 'paid_leaves', 'absent',
+              'paid_holiday', 'extra_days', 'ot_hours'],
+    show: [['emp_id', 'ID'], ['name', 'Name'], ['present', 'Present'],
+           ['absent', 'Absent'], ['extra_days', 'Extra'], ['ot_hours', 'OT hrs']],
+  },
+
+  incentive: {
+    label: 'Incentive',
+    note: 'One row per employee. Amounts must be positive.',
+    headers: ['S.No', 'Employee ID', 'Employee Name', 'Total Incentive'],
+    sample: [[1, '102', 'Naresh Kumar', 1062], [2, '203', 'Sandeep Kumar', 2104]],
+    textCols: ['B'],
+    map: {
+      employeeid: 'emp_id', empid: 'emp_id', id: 'emp_id',
+      employeename: 'name', empolyeename: 'name', name: 'name',
+      totalincentive: 'amount', incentive: 'amount', amount: 'amount',
+    },
+    need: ['emp_id', 'amount'],
+    numeric: ['amount'],
+    positive: ['amount'],
+    show: [['emp_id', 'ID'], ['name', 'Name'], ['amount', 'Incentive', 'money']],
+  },
+
+  expense: {
+    label: 'Expense',
+    note: 'Several rows per employee are fine — they get totalled.',
+    headers: ['S.No', 'Employee ID', 'Employee Name', 'Expense Type', 'Expense Amount'],
+    sample: [[1, '102', 'Naresh Kumar', 'Petrol expense', 500],
+             [2, '205', 'Ashish Ronyar', 'Recharge', 780]],
+    textCols: ['B'],
+    map: {
+      employeeid: 'emp_id', empid: 'emp_id', id: 'emp_id',
+      employeename: 'name', empolyeename: 'name', name: 'name',
+      expensetype: 'expense_type', type: 'expense_type', description: 'expense_type',
+      expenseamount: 'amount', amount: 'amount',
+    },
+    need: ['emp_id', 'amount'],
+    numeric: ['amount'],
+    positive: ['amount'],
+    show: [['emp_id', 'ID'], ['name', 'Name'], ['expense_type', 'Type'],
+           ['amount', 'Amount', 'money']],
+  },
+
+  advance: {
+    label: 'Advance',
+    note: 'Several rows per employee are fine — they get totalled.',
+    headers: ['S.No', 'Employee ID', 'Employee Name', 'Given By', 'Advance Amount'],
+    sample: [[1, '102', 'Naresh Kumar', 'By Company', 6000],
+             [2, '102', 'Naresh Kumar', 'By JP Sir', 2000]],
+    textCols: ['B'],
+    map: {
+      employeeid: 'emp_id', empid: 'emp_id', id: 'emp_id',
+      employeename: 'name', empolyeename: 'name', name: 'name',
+      givenby: 'given_by', towhom: 'given_by', by: 'given_by', source: 'given_by',
+      advanceamount: 'amount', amount: 'amount', advance: 'amount',
+    },
+    need: ['emp_id', 'amount'],
+    numeric: ['amount'],
+    positive: ['amount'],
+    show: [['emp_id', 'ID'], ['name', 'Name'], ['given_by', 'Given by'],
+           ['amount', 'Amount', 'money']],
+  },
+
+  holiday: {
+    label: 'Holiday',
+    note: 'Company holidays for the month. No employee IDs on this sheet.',
+    headers: ['Date', 'Reason'],
+    sample: [['15/08/26', 'Independence Day'], ['28/08/26', 'Raksha Bandhan']],
+    textCols: [],
+    map: { date: 'date', day: 'date', reason: 'reason', occasion: 'reason',
+           festival: 'reason', description: 'reason' },
+    need: ['date'],
+    numeric: [],
+    show: [['date', 'Date'], ['reason', 'Reason']],
+    noEmp: true,
+  },
+};
+
+let runs = [];
+let currentRun = null;
+let runFiles = [];
+
+/* ------------------------------ nav -------------------------------- */
+$('navStaff').onclick = () => showView('staff');
+$('navPayroll').onclick = () => showView('payroll');
+
+function showView(v) {
+  $('navStaff').classList.toggle('on', v === 'staff');
+  $('navPayroll').classList.toggle('on', v === 'payroll');
+  $('staffView').classList.toggle('hidden', v !== 'staff');
+  $('payrollView').classList.toggle('hidden', v === 'staff');
+  if (v === 'payroll') { if (!staff.length) load().then(loadRuns); else loadRuns(); }
+}
+
+/* ----------------------------- runs -------------------------------- */
+async function loadRuns() {
+  const { data, error } = await sb.from('payroll_runs')
+    .select('*').order('period', { ascending: false });
+  if (error) {
+    $('payrollView').innerHTML = `<div class="empty">Couldn't load payroll: ${esc(error.message)}</div>`;
+    return;
+  }
+  runs = data || [];
+  if (currentRun && !runs.find((r) => r.id === currentRun.id)) currentRun = null;
+  currentRun ? openRun(currentRun.id) : renderRunList();
+}
+
+function renderRunList() {
+  $('payrollView').innerHTML = `
+    <section class="card runbar">
+      <div>
+        <div class="eyebrow">Monthly payroll</div>
+        <div style="font-size:15px;margin-top:4px">
+          Upload the five sheets for a month, then check them here.
+        </div>
+      </div>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-ghost" id="allTplBtn">See all formats</button>
+        <button class="btn btn-green" id="newRunBtn">+ New month</button>
+      </div>
+    </section>
+
+    <div class="wrap">
+      ${runs.length ? runs.map((r) => `
+        <div class="runrow" data-run="${r.id}">
+          <div>
+            <div style="font-weight:500">${esc(r.label)}</div>
+            <div class="sub">${r.status === 'final' ? 'Finalised' : 'Draft'}</div>
+          </div>
+          <div class="sub">open →</div>
+        </div>`).join('')
+      : '<div class="empty">No payroll months yet. Start one with “New month”.</div>'}
+    </div>`;
+
+  $('newRunBtn').onclick = newRun;
+  $('allTplBtn').onclick = showAllFormats;
+  document.querySelectorAll('[data-run]').forEach((el) => {
+    el.onclick = () => openRun(el.dataset.run);
+  });
+}
+
+function newRun() {
+  const now = new Date();
+  const months = [];
+  for (let i = 0; i < 14; i++) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i + 1, 1);
+    const period = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    const label = d.toLocaleString('en-IN', { month: 'long', year: 'numeric' });
+    if (!runs.find((r) => r.period === period)) months.push({ period, label });
+  }
+
+  openModal('New payroll month', `
+    <label class="f eyebrow">Month</label>
+    <select id="runMonth">
+      ${months.map((m) => `<option value="${m.period}">${esc(m.label)}</option>`).join('')}
+    </select>
+    <p class="note">Months already started aren't listed. Open those from the list instead.</p>
+    <div id="runErr" class="err hidden"></div>
+    <div class="foot">
+      <button class="btn btn-ghost" data-close>Cancel</button>
+      <button class="btn btn-green" id="createRun" ${months.length ? '' : 'disabled'}>Create</button>
+    </div>`, 'sm');
+
+  $('createRun').onclick = async () => {
+    const period = $('runMonth').value;
+    const label = months.find((m) => m.period === period).label;
+    const { data: { user } } = await sb.auth.getUser();
+    const { data, error } = await sb.from('payroll_runs')
+      .insert({ period, label, created_by: user.id }).select().single();
+    if (error) {
+      const e = $('runErr');
+      e.textContent = `Couldn't create: ${error.message}`;
+      e.classList.remove('hidden');
+      return;
+    }
+    closeModal();
+    runs.unshift(data);
+    openRun(data.id);
+  };
+}
+
+async function openRun(id) {
+  currentRun = runs.find((r) => r.id === id);
+  if (!currentRun) return renderRunList();
+
+  const { data } = await sb.from('payroll_files').select('*').eq('run_id', id);
+  runFiles = data || [];
+  renderRun();
+}
+
+function renderRun() {
+  const fileFor = (k) => runFiles.find((f) => f.kind === k);
+  const done = Object.keys(SHEET_KINDS).filter((k) => fileFor(k)).length;
+
+  $('payrollView').innerHTML = `
+    <section class="card runbar">
+      <div>
+        <button class="linkbtn" id="backBtn"
+          style="color:var(--ink-soft);padding:0;margin-bottom:6px">← All months</button>
+        <div style="font-family:Georgia,serif;font-size:24px">${esc(currentRun.label)}</div>
+        <div class="sub">${done} of 5 sheets uploaded</div>
+      </div>
+      <button class="btn btn-ghost" id="allTplBtn2">See all formats</button>
+    </section>
+
+    <div class="sheets">
+      ${Object.entries(SHEET_KINDS).map(([kind, cfg]) => {
+        const f = fileFor(kind);
+        const dot = !f ? 'dot-empty' : (f.unmatched ? 'dot-warn' : 'dot-ok');
+        return `
+        <div class="sheet">
+          <h3><span class="dot ${dot}"></span>${esc(cfg.label)} sheet</h3>
+          <div class="sub" style="margin-left:15px">${esc(cfg.note)}</div>
+
+          <div class="fieldlist cols">${cfg.headers.map(esc).join(' · ')}</div>
+
+          ${f ? `
+            <div style="font-size:13px">
+              <b>${f.row_count}</b> row${f.row_count === 1 ? '' : 's'} uploaded
+              ${f.unmatched ? `<span style="color:var(--amber)"> · ${f.unmatched} unmatched ID${f.unmatched === 1 ? '' : 's'}</span>` : ''}
+            </div>
+            <div class="sub">${esc(f.filename || '')} · ${new Date(f.uploaded_at).toLocaleString('en-IN')}</div>
+          ` : '<div class="sub">Not uploaded yet</div>'}
+
+          <div class="acts">
+            <button class="btn btn-ghost" data-tpl="${kind}">Template</button>
+            ${f ? `<button class="btn btn-ghost" data-view="${kind}">View</button>
+                   <button class="btn btn-ghost" data-clear="${kind}" style="color:var(--rose)">Remove</button>
+                   <button class="btn btn-ghost" data-up="${kind}">Replace</button>`
+                : `<button class="btn btn-green" data-up="${kind}">Upload</button>`}
+          </div>
+        </div>`;
+      }).join('')}
+    </div>`;
+
+  $('backBtn').onclick = () => { currentRun = null; renderRunList(); };
+  $('allTplBtn2').onclick = showAllFormats;
+  document.querySelectorAll('[data-tpl]').forEach((b) => b.onclick = () => downloadTemplate(b.dataset.tpl));
+  document.querySelectorAll('[data-up]').forEach((b) => b.onclick = () => pickSheet(b.dataset.up));
+  document.querySelectorAll('[data-view]').forEach((b) => b.onclick = () => viewSheet(b.dataset.view));
+  document.querySelectorAll('[data-clear]').forEach((b) => b.onclick = () => removeSheet(b.dataset.clear));
+}
+
+/* --------------------------- templates ----------------------------- */
+function showAllFormats() {
+  openModal('Sheet formats', `
+    <p style="margin:0 0 16px;font-size:14px">
+      Five sheets per month. Column headings can be spelled loosely, but the
+      columns below need to be there. Employee ID is what links a row to a
+      person — always include it, and format that column as <b>Text</b> in
+      Excel so account-style IDs keep any leading zeros.
+    </p>
+    ${Object.entries(SHEET_KINDS).map(([kind, cfg]) => `
+      <div style="margin-bottom:18px">
+        <div style="font-weight:600;font-size:14px">${esc(cfg.label)} sheet</div>
+        <div class="sub" style="margin-bottom:6px">${esc(cfg.note)}</div>
+        <div class="fieldlist">${cfg.headers.map(esc).join(' · ')}</div>
+        <button class="btn btn-ghost" data-tpl2="${kind}" style="margin-top:8px">
+          Download ${esc(cfg.label.toLowerCase())} template
+        </button>
+      </div>`).join('')}
+    <div class="foot"><button class="btn btn-ghost" data-close>Close</button></div>`, 'lg');
+
+  document.querySelectorAll('[data-tpl2]').forEach((b) =>
+    b.onclick = () => downloadTemplate(b.dataset.tpl2));
+}
+
+async function downloadTemplate(kind) {
+  const cfg = SHEET_KINDS[kind];
+  const XLSX = await loadSheetJS();
+  const aoa = [cfg.headers, ...cfg.sample];
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+
+  // keep ID columns as text so Excel never reformats them
+  for (let r = 2; r <= aoa.length; r++) {
+    cfg.textCols.forEach((col) => {
+      const c = ws[col + r];
+      if (c && c.v !== '') { c.t = 's'; c.v = String(c.v); c.z = '@'; }
+    });
+  }
+  ws['!cols'] = cfg.headers.map((h) => ({ wch: Math.max(12, h.length + 4) }));
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, cfg.label);
+  XLSX.writeFile(wb, `${kind}-template.xlsx`);
+}
+
+/* ---------------------------- uploading ---------------------------- */
+function pickSheet(kind) {
+  const fi = $('fileInput');
+  fi.value = '';
+  fi.onchange = () => { if (fi.files[0]) parseSheet(kind, fi.files[0]); };
+  fi.click();
+}
+
+async function parseSheet(kind, file) {
+  const cfg = SHEET_KINDS[kind];
+  let gridF, gridR;
+  try {
+    const XLSX = await loadSheetJS();
+    const buf = await file.arrayBuffer();
+    const wb = XLSX.read(buf, { type: 'array', cellDates: true });
+    const sheet = wb.Sheets[wb.SheetNames[0]];
+    gridF = XLSX.utils.sheet_to_json(sheet, { header: 1, blankrows: false, defval: '', raw: false });
+    gridR = XLSX.utils.sheet_to_json(sheet, { header: 1, blankrows: false, defval: '', raw: true });
+  } catch (e) {
+    return alert(`Couldn't read that file: ${e.message}`);
+  }
+  if (!gridF || gridF.length < 2)
+    return alert('That sheet looks empty. It needs a heading row plus at least one row of data.');
+
+  const cols = {};
+  gridF[0].map(normKey).forEach((h, i) => {
+    const f = cfg.map[h];
+    if (f && cols[f] === undefined) cols[f] = i;
+  });
+
+  const missing = cfg.need.filter((f) => cols[f] === undefined);
+  if (missing.length) {
+    const nice = { emp_id: 'Employee ID', amount: 'Amount', date: 'Date' };
+    return alert(`Couldn't find these columns: ${missing.map((m) => nice[m] || m).join(', ')}.\n\n` +
+                 `The first row of the sheet must be the headings. ` +
+                 `Use the Template button to see the expected layout.`);
+  }
+
+  const cell = (r, f) => {
+    const i = cols[f];
+    if (i === undefined) return '';
+    const rv = gridR[r]?.[i];
+    if (rv instanceof Date) return rv.toISOString().slice(0, 10);
+    if (typeof rv === 'number' && isFinite(rv))
+      return Number.isInteger(rv) ? rv.toFixed(0) : String(rv);
+    const shown = String(gridF[r]?.[i] ?? '').trim();
+    return shown || String(rv ?? '').trim();
+  };
+
+  const known = new Set(staff.map((e) => String(e.emp_id).toLowerCase()));
+  const good = [], bad = [];
+
+  for (let r = 1; r < gridF.length; r++) {
+    if (!gridF[r] || gridF[r].every((c) => String(c ?? '').trim() === '')) continue;
+
+    const rec = {};
+    const problems = [];
+
+    Object.keys(cols).forEach((f) => { rec[f] = cell(r, f); });
+
+    cfg.numeric.forEach((f) => {
+      if (rec[f] === undefined) return;
+      if (rec[f] === '') { rec[f] = 0; return; }
+      const n = Number(String(rec[f]).replace(/[₹,\s]/g, ''));
+      if (!isFinite(n)) { problems.push(`${f.replace(/_/g, ' ')} is not a number`); return; }
+      if ((cfg.positive || []).includes(f) && n < 0)
+        problems.push(`${f.replace(/_/g, ' ')} is negative`);
+      rec[f] = n;
+    });
+
+    if (cfg.need.includes('emp_id') && !rec.emp_id) problems.push('no Employee ID');
+    if (cfg.need.includes('amount') && rec.amount === 0 && cell(r, 'amount') === '')
+      problems.push('no amount');
+
+    if (kind === 'holiday') {
+      const d = parseDMY(rec.date);
+      if (!d) problems.push(`date "${rec.date}" not understood — use dd/mm/yy`);
+      else rec.date = d;
+    }
+
+    if (problems.length) {
+      bad.push({ line: r + 1, who: rec.name || rec.emp_id || rec.date || '—', why: problems.join(', ') });
+      continue;
+    }
+
+    const matched = cfg.noEmp ? true : known.has(String(rec.emp_id).toLowerCase());
+    good.push({ row_no: r + 1, emp_id: cfg.noEmp ? null : String(rec.emp_id), matched, data: rec });
+  }
+
+  previewSheet(kind, file.name, good, bad);
+}
+
+function parseDMY(v) {
+  if (!v) return null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(v)) return v;               // already ISO
+  const m = String(v).match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})$/);
+  if (!m) return null;
+  let [, d, mo, y] = m;
+  y = y.length === 2 ? '20' + y : y;
+  const dt = new Date(Number(y), Number(mo) - 1, Number(d));
+  if (dt.getMonth() !== Number(mo) - 1) return null;          // 31/02 etc
+  return `${y}-${String(mo).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+}
+
+function previewSheet(kind, filename, good, bad) {
+  const cfg = SHEET_KINDS[kind];
+  const unmatched = good.filter((g) => !g.matched).length;
+  const nameOf = new Map(staff.map((e) => [String(e.emp_id).toLowerCase(), e.name]));
+
+  const cellOut = (g, f, fmt) => {
+    const v = g.data[f];
+    if (f === 'emp_id' && !g.matched) return `<span style="color:var(--rose)">${esc(v)} ?</span>`;
+    if (fmt === 'money') return money(v);
+    return esc(v ?? '—');
+  };
+
+  openModal(`${cfg.label} sheet — check before saving`, `
+    <div style="margin-bottom:14px">
+      <span class="pill pill-new">${good.length} row${good.length === 1 ? '' : 's'}</span>
+      ${unmatched ? `<span class="pill pill-upd">${unmatched} unmatched ID</span>` : ''}
+      ${bad.length ? `<span class="pill pill-bad">${bad.length} skipped</span>` : ''}
+    </div>
+
+    ${unmatched ? `<p style="font-size:13.5px;color:var(--amber);margin:0 0 12px">
+      Some Employee IDs aren't in the staff register. Those rows are saved but
+      marked, so nothing silently disappears — check them before the month is run.
+    </p>` : ''}
+
+    ${good.length ? `
+      <div class="preview">
+        <table><thead><tr>
+          ${cfg.show.map(([, label]) => `<th>${esc(label)}</th>`).join('')}
+          ${cfg.noEmp ? '' : '<th>In register</th>'}
+        </tr></thead><tbody>
+        ${good.slice(0, 200).map((g) => `<tr${g.matched ? '' : ' class="badrow"'}>
+          ${cfg.show.map(([f, , fmt]) => `<td>${cellOut(g, f, fmt)}</td>`).join('')}
+          ${cfg.noEmp ? '' : `<td class="sub">${g.matched ? esc(nameOf.get(String(g.emp_id).toLowerCase())) : 'not found'}</td>`}
+        </tr>`).join('')}
+        </tbody></table>
+      </div>
+      ${good.length > 200 ? `<p class="note">Showing the first 200 of ${good.length} rows.</p>` : ''}
+    ` : '<p style="font-size:14px">Nothing in this file can be saved.</p>'}
+
+    ${bad.length ? `
+      <p class="eyebrow" style="margin:18px 0 6px">Skipped rows</p>
+      <div class="preview">
+        <table><thead><tr><th>Sheet row</th><th>Who</th><th>Problem</th></tr></thead><tbody>
+        ${bad.map((b) => `<tr class="badrow">
+          <td class="mono">${b.line}</td><td>${esc(b.who)}</td><td>${esc(b.why)}</td>
+        </tr>`).join('')}
+        </tbody></table>
+      </div>` : ''}
+
+    <div id="upErr" class="err hidden"></div>
+    <div class="foot">
+      <button class="btn btn-ghost" data-close>Cancel</button>
+      <button class="btn btn-green" id="saveSheet" ${good.length ? '' : 'disabled'}>
+        Save ${good.length} row${good.length === 1 ? '' : 's'}
+      </button>
+    </div>`, 'lg');
+
+  $('saveSheet').onclick = async () => {
+    const btn = $('saveSheet');
+    btn.disabled = true; btn.textContent = 'Saving…';
+    const fail = (m) => {
+      btn.disabled = false; btn.textContent = 'Try again';
+      const e = $('upErr'); e.textContent = m; e.classList.remove('hidden');
+    };
+
+    const { data: { user } } = await sb.auth.getUser();
+
+    // replacing a sheet: the old file row goes, and its rows go with it
+    const existing = runFiles.find((f) => f.kind === kind);
+    if (existing) {
+      const { error } = await sb.from('payroll_files').delete().eq('id', existing.id);
+      if (error) return fail(`Couldn't replace the old sheet: ${error.message}`);
+    }
+
+    const { data: fileRow, error: fErr } = await sb.from('payroll_files').insert({
+      run_id: currentRun.id, kind, filename,
+      row_count: good.length, unmatched, uploaded_by: user.id,
+    }).select().single();
+    if (fErr) return fail(`Couldn't save: ${fErr.message}`);
+
+    const payload = good.map((g) => ({
+      file_id: fileRow.id, run_id: currentRun.id, kind,
+      emp_id: g.emp_id, row_no: g.row_no, matched: g.matched, data: g.data,
+    }));
+
+    for (let i = 0; i < payload.length; i += 400) {
+      const { error } = await sb.from('payroll_rows').insert(payload.slice(i, i + 400));
+      if (error) {
+        await sb.from('payroll_files').delete().eq('id', fileRow.id);
+        return fail(`Couldn't save the rows: ${error.message}`);
+      }
+    }
+
+    closeModal();
+    await openRun(currentRun.id);
+  };
+}
+
+/* ------------------------- view / remove --------------------------- */
+async function viewSheet(kind) {
+  const cfg = SHEET_KINDS[kind];
+  const { data, error } = await sb.from('payroll_rows')
+    .select('*').eq('run_id', currentRun.id).eq('kind', kind).order('row_no');
+  if (error) return alert(`Couldn't load: ${error.message}`);
+
+  const nameOf = new Map(staff.map((e) => [String(e.emp_id).toLowerCase(), e.name]));
+  const rows = data || [];
+
+  openModal(`${cfg.label} — ${currentRun.label}`, `
+    <p style="margin:0 0 12px;font-size:14px">${rows.length} row${rows.length === 1 ? '' : 's'}</p>
+    <div class="preview">
+      <table><thead><tr>
+        ${cfg.show.map(([, l]) => `<th>${esc(l)}</th>`).join('')}
+        ${cfg.noEmp ? '' : '<th>In register</th>'}
+      </tr></thead><tbody>
+      ${rows.map((r) => `<tr${r.matched ? '' : ' class="badrow"'}>
+        ${cfg.show.map(([f, , fmt]) =>
+          `<td>${fmt === 'money' ? money(r.data[f]) : esc(r.data[f] ?? '—')}</td>`).join('')}
+        ${cfg.noEmp ? '' : `<td class="sub">${r.matched ? esc(nameOf.get(String(r.emp_id).toLowerCase())) : 'not found'}</td>`}
+      </tr>`).join('')}
+      </tbody></table>
+    </div>
+    <div class="foot"><button class="btn btn-ghost" data-close>Close</button></div>`, 'lg');
+}
+
+function removeSheet(kind) {
+  const f = runFiles.find((x) => x.kind === kind);
+  if (!f) return;
+  openModal('Remove sheet', `
+    <p style="margin:0;font-size:14px">
+      Remove the ${esc(SHEET_KINDS[kind].label.toLowerCase())} sheet for
+      ${esc(currentRun.label)}? Its ${f.row_count} rows are deleted and you
+      can upload a fresh file.
+    </p>
+    <div class="foot">
+      <button class="btn btn-ghost" data-close>Keep it</button>
+      <button class="btn btn-rose" id="doRemove">Remove</button>
+    </div>`, 'sm');
+
+  $('doRemove').onclick = async () => {
+    const { error } = await sb.from('payroll_files').delete().eq('id', f.id);
+    if (error) return alert(`Couldn't remove: ${error.message}`);
+    closeModal();
+    await openRun(currentRun.id);
+  };
+}
 
 /* ------------------------------ modal ------------------------------ */
 function openModal(title, bodyHtml, size = '') {
