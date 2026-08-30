@@ -22,7 +22,6 @@
            letter-spacing:.12em;color:var(--ink-soft)}
   .hidden{display:none !important}
 
-  /* login */
   #login{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
   #login .box{width:100%;max-width:380px}
   .card{background:var(--card);border:1px solid var(--line);border-radius:10px}
@@ -39,7 +38,6 @@
   .btn:disabled{opacity:.5;cursor:not-allowed}
   .err{color:var(--rose);font-size:13.5px;margin-top:12px}
 
-  /* header */
   header{background:var(--ink)}
   .bar{max-width:1120px;margin:0 auto;padding:12px 20px;display:flex;
        align-items:center;justify-content:space-between;gap:16px}
@@ -52,7 +50,6 @@
 
   main{max-width:1120px;margin:0 auto;padding:24px 20px 60px}
 
-  /* payout strip */
   .strip{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:flex-end;
          gap:20px;padding:18px 20px;margin-bottom:20px}
   .payout{font-family:var(--mono);font-size:44px;color:var(--green);line-height:1.05}
@@ -61,12 +58,10 @@
   .stats .n{font-size:22px}
   .stats .l{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--ink-soft)}
 
-  /* controls */
   .controls{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px}
   .controls input,.controls select{width:auto}
   .controls .search{flex:1;min-width:200px}
 
-  /* table */
   table{width:100%;border-collapse:collapse;font-size:14px;background:var(--card)}
   thead th{background:#F5F7F5;text-align:left;font-weight:400;padding:10px 14px;
            font-family:var(--mono);font-size:11px;text-transform:uppercase;
@@ -86,11 +81,11 @@
   .wrap{overflow-x:auto;border:1px solid var(--line);border-radius:10px}
   .empty{padding:56px 20px;text-align:center;color:var(--muted);font-size:14px;background:var(--card)}
 
-  /* modal */
   .veil{position:fixed;inset:0;background:rgba(27,42,47,.45);display:flex;
         align-items:flex-start;justify-content:center;padding:16px;overflow-y:auto;z-index:50}
   .modal{background:#fff;border-radius:10px;width:100%;max-width:640px;margin:32px 0}
   .modal.sm{max-width:420px}
+  .modal.lg{max-width:820px}
   .modal .head{display:flex;align-items:center;justify-content:space-between;
                padding:14px 20px;border-bottom:1px solid var(--line)}
   .modal .head h2{margin:0;font-family:Georgia,serif;font-size:19px;font-weight:400}
@@ -104,6 +99,22 @@
   .check{display:flex;align-items:center;gap:8px;margin-top:16px;font-size:14px;cursor:pointer}
   .check input{width:auto}
   textarea.csv{height:220px;font-family:var(--mono);font-size:11.5px;resize:vertical}
+
+  /* import */
+  .drop{border:2px dashed var(--line);border-radius:10px;padding:28px 20px;text-align:center;
+        cursor:pointer;background:#FAFBFA}
+  .drop:hover,.drop.over{border-color:var(--green);background:var(--green-soft)}
+  .cols{width:100%;border-collapse:collapse;font-size:13px;margin:14px 0}
+  .cols td,.cols th{padding:6px 10px;border:1px solid var(--line);text-align:left}
+  .cols th{background:#F5F7F5;font-weight:500;font-family:var(--mono);font-size:11px;
+           text-transform:uppercase;letter-spacing:.06em;color:var(--ink-soft)}
+  .pill{display:inline-block;padding:3px 9px;border-radius:20px;font-size:12px;
+        font-family:var(--mono);margin-right:8px}
+  .pill-new{background:var(--green-soft);color:var(--green)}
+  .pill-upd{background:var(--amber-soft);color:var(--amber)}
+  .pill-bad{background:var(--rose-soft);color:var(--rose)}
+  .preview{max-height:260px;overflow:auto;border:1px solid var(--line);border-radius:8px}
+  .badrow{background:var(--rose-soft)}
 
   @media(max-width:640px){
     .grid2{grid-template-columns:1fr}
@@ -182,6 +193,7 @@
       </select>
       <button id="clearBtn" class="btn btn-ghost hidden">Clear filters</button>
       <button id="exportBtn" class="btn btn-ghost">Export</button>
+      <button id="importBtn" class="btn btn-ghost hidden">Import Excel</button>
       <button id="addBtn" class="btn btn-green hidden">+ Add employee</button>
     </div>
 
@@ -191,22 +203,22 @@
 </div>
 
 <div id="modalHost"></div>
+<input type="file" id="fileInput" accept=".xlsx,.xls,.csv" class="hidden" />
 
 <script type="module">
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
 /* ===================================================================
-   1. PASTE YOUR SUPABASE PROJECT DETAILS HERE
-   Supabase → Project Settings → API
-   The anon key is safe to publish: row level security protects the data.
+   PASTE YOUR SUPABASE DETAILS HERE
+   Project Settings → API Keys. Use the anon / publishable key.
    =================================================================== */
 const SUPABASE_URL = 'https://vphmuuhnfqluvhtdpbhb.supabase.co';
-const SUPABASE_ANON_KEY = 'sb_publishable_2hAro_6cC50VDF77uiQHTw_QohUNhKe';
+const SUPABASE_ANON_KEY = 'PASTE_YOUR_PUBLISHABLE_KEY_HERE';
 
 const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 /* ------------------------------ state ------------------------------ */
-let profile = null;          // { full_name, role }
+let profile = null;
 let staff = [];
 const filters = { q: '', area: 'all', desig: 'all', status: 'all' };
 const isMain = () => profile?.role === 'main';
@@ -233,7 +245,8 @@ async function signIn() {
   });
   btn.disabled = false; btn.textContent = 'Open register';
   if (error) {
-    errEl.textContent = "That email and password don't match. Try again.";
+    // show the real reason, not a guess
+    errEl.textContent = error.message;
     errEl.classList.remove('hidden');
     return;
   }
@@ -253,6 +266,7 @@ async function start() {
   $('whoami').textContent =
     `${profile.full_name} · ${isMain() ? 'main account' : 'view only'}`;
   $('addBtn').classList.toggle('hidden', !isMain());
+  $('importBtn').classList.toggle('hidden', !isMain());
 
   await load();
 }
@@ -326,7 +340,7 @@ function render() {
       staff.length
         ? 'No employee matches these filters. Clear them to see the full register.'
         : (isMain()
-            ? 'The register is empty. Add your first employee to start.'
+            ? 'The register is empty. Add your first employee, or import a sheet.'
             : 'The register is empty. The main account needs to add staff first.')
     }</div>`;
     return;
@@ -493,12 +507,262 @@ function openForm(emp) {
   };
 }
 
+/* ============================ EXCEL IMPORT ========================== */
+
+const TEMPLATE_HEADERS = ['Employee ID', 'Name', 'Bank', 'Account No', 'IFSC',
+                          'Area', 'Designation', 'Monthly Salary', 'Status'];
+
+// header text → our field name. Anything unrecognised is ignored.
+const HEADER_MAP = {
+  employeeid: 'emp_id', empid: 'emp_id', id: 'emp_id', code: 'emp_id', empcode: 'emp_id',
+  name: 'name', employeename: 'name', staffname: 'name', empname: 'name',
+  bank: 'bank_name', bankname: 'bank_name',
+  accountno: 'account_no', accountnumber: 'account_no', account: 'account_no',
+  acno: 'account_no', ac: 'account_no', bankaccount: 'account_no',
+  ifsc: 'ifsc', ifsccode: 'ifsc',
+  area: 'area', location: 'area', branch: 'area',
+  designation: 'designation', type: 'designation', employmenttype: 'designation',
+  salary: 'monthly_salary', monthlysalary: 'monthly_salary', pay: 'monthly_salary',
+  monthlypay: 'monthly_salary', wage: 'monthly_salary',
+  status: 'active', active: 'active',
+};
+
+const normKey = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+
+async function loadSheetJS() {
+  if (window.XLSX) return window.XLSX;
+  await new Promise((res, rej) => {
+    const s = document.createElement('script');
+    s.src = 'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js';
+    s.onload = res;
+    s.onerror = () => rej(new Error('Could not load the Excel reader. Check your connection.'));
+    document.head.appendChild(s);
+  });
+  return window.XLSX;
+}
+
+$('importBtn').onclick = () => openImport();
+
+function openImport() {
+  openModal('Import staff from Excel', `
+    <p style="margin:0 0 14px;font-size:14px">
+      Upload an .xlsx or .csv file. The first row must be column headings.
+      Anyone whose Employee ID is already on file will be updated, not duplicated.
+    </p>
+
+    <table class="cols">
+      <tr><th>Column</th><th>Required</th><th>Notes</th></tr>
+      <tr><td>Employee ID</td><td>Yes</td><td>Must be unique</td></tr>
+      <tr><td>Name</td><td>Yes</td><td></td></tr>
+      <tr><td>Area</td><td>Yes</td><td>Drives the area filter</td></tr>
+      <tr><td>Monthly Salary</td><td>Yes</td><td>Numbers only, no ₹ or commas needed</td></tr>
+      <tr><td>Designation</td><td>No</td><td>Full Time or Part Time. Blank = Full Time</td></tr>
+      <tr><td>Bank, Account No, IFSC</td><td>No</td><td>Format Account No as <b>Text</b> in Excel so leading zeros survive</td></tr>
+      <tr><td>Status</td><td>No</td><td>Active or Inactive. Blank = Active</td></tr>
+    </table>
+
+    <p style="font-size:13px;color:var(--muted);margin:0 0 14px">
+      Heading spelling is flexible — "Emp ID", "Employee Name", "Salary" and similar all work.
+    </p>
+
+    <div class="drop" id="drop">
+      <div style="font-size:15px;margin-bottom:4px">Click to choose a file, or drag it here</div>
+      <div class="note" style="margin:0">.xlsx, .xls or .csv</div>
+    </div>
+
+    <div id="importErr" class="err hidden"></div>
+
+    <div class="foot">
+      <button class="btn btn-ghost" id="tplBtn">Download blank template</button>
+      <button class="btn btn-ghost" data-close>Close</button>
+    </div>`, 'lg');
+
+  const drop = $('drop');
+  const fi = $('fileInput');
+  drop.onclick = () => { fi.value = ''; fi.click(); };
+  fi.onchange = () => { if (fi.files[0]) handleFile(fi.files[0]); };
+  drop.ondragover = (e) => { e.preventDefault(); drop.classList.add('over'); };
+  drop.ondragleave = () => drop.classList.remove('over');
+  drop.ondrop = (e) => {
+    e.preventDefault(); drop.classList.remove('over');
+    if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]);
+  };
+
+  $('tplBtn').onclick = () => {
+    const csv = TEMPLATE_HEADERS.join(',') + '\n' +
+      'EMP-001,Ramesh Kumar,State Bank of India,30123456789,SBIN0000123,Rohini,Full Time,25000,Active\n' +
+      'EMP-002,Sunita Devi,HDFC Bank,50100987654321,HDFC0001234,Pitampura,Part Time,9000,Active\n';
+    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8;' }));
+    const a = document.createElement('a');
+    a.href = url; a.download = 'staff-import-template.csv'; a.click();
+    URL.revokeObjectURL(url);
+  };
+}
+
+async function handleFile(file) {
+  const errEl = $('importErr');
+  const fail = (m) => { errEl.textContent = m; errEl.classList.remove('hidden'); };
+  errEl.classList.add('hidden');
+  $('drop').innerHTML = '<div style="font-size:15px">Reading the file…</div>';
+
+  let grid;
+  try {
+    const XLSX = await loadSheetJS();
+    const buf = await file.arrayBuffer();
+    const wb = XLSX.read(buf, { type: 'array' });
+    const sheet = wb.Sheets[wb.SheetNames[0]];
+    // raw:false reads each cell as it is displayed in Excel, so account
+    // numbers keep their leading zeros and never turn into 3.01235E+13
+    grid = XLSX.utils.sheet_to_json(sheet, { header: 1, blankrows: false, defval: '', raw: false });
+  } catch (e) {
+    return fail(`Couldn't read that file: ${e.message}`);
+  }
+
+  if (!grid || grid.length < 2)
+    return fail('That sheet looks empty. It needs a heading row plus at least one employee.');
+
+  // map headings
+  const headers = grid[0].map(normKey);
+  const cols = {};
+  headers.forEach((h, i) => { if (HEADER_MAP[h] && cols[HEADER_MAP[h]] === undefined) cols[HEADER_MAP[h]] = i; });
+
+  const missing = ['emp_id', 'name', 'area', 'monthly_salary'].filter((f) => cols[f] === undefined);
+  if (missing.length) {
+    const nice = { emp_id: 'Employee ID', name: 'Name', area: 'Area', monthly_salary: 'Monthly Salary' };
+    return fail(`Couldn't find these columns: ${missing.map((m) => nice[m]).join(', ')}. ` +
+                `The first row of the sheet must be the headings.`);
+  }
+
+  const cell = (row, field) => cols[field] === undefined ? '' : String(row[cols[field]] ?? '').trim();
+  const byEmpId = new Map(staff.map((e) => [e.emp_id.toLowerCase(), e]));
+  const seen = new Map();
+  const good = [], bad = [];
+
+  for (let r = 1; r < grid.length; r++) {
+    const row = grid[r];
+    if (!row || row.every((c) => String(c ?? '').trim() === '')) continue;
+
+    const empId = cell(row, 'emp_id');
+    const name = cell(row, 'name');
+    const area = cell(row, 'area');
+    const rawSalary = cell(row, 'monthly_salary').replace(/[₹,\s]/g, '');
+    const salary = Number(rawSalary);
+
+    const problems = [];
+    if (!empId) problems.push('no Employee ID');
+    if (!name) problems.push('no Name');
+    if (!area) problems.push('no Area');
+    if (rawSalary === '' || !isFinite(salary) || salary < 0) problems.push('salary is not a valid number');
+    if (empId && seen.has(empId.toLowerCase()))
+      problems.push(`Employee ID repeats row ${seen.get(empId.toLowerCase())}`);
+
+    // Excel turns long account numbers into 3.01235E+13 unless the column
+    // is formatted as Text. Catch it here rather than saving a broken number.
+    const acRaw = cell(row, 'account_no');
+    if (/e\+/i.test(acRaw))
+      problems.push('account number lost its digits — format that column as Text in Excel');
+
+    if (problems.length) { bad.push({ line: r + 1, empId, name, why: problems.join(', ') }); continue; }
+    seen.set(empId.toLowerCase(), r + 1);
+
+    const d = normKey(cell(row, 'designation'));
+    const st = normKey(cell(row, 'active'));
+
+    good.push({
+      emp_id: empId,
+      name,
+      bank_name: cell(row, 'bank_name'),
+      account_no: acRaw,
+      ifsc: cell(row, 'ifsc').toUpperCase(),
+      area,
+      designation: (d.startsWith('part') || d === 'pt') ? 'Part Time' : 'Full Time',
+      monthly_salary: salary,
+      active: !(st.startsWith('inactive') || st === 'no' || st === 'false' || st === '0'),
+      _existing: byEmpId.has(empId.toLowerCase()),
+    });
+  }
+
+  showPreview(good, bad);
+}
+
+function showPreview(good, bad) {
+  const adds = good.filter((g) => !g._existing).length;
+  const upds = good.filter((g) => g._existing).length;
+  const total = good.reduce((s, g) => s + (g.active ? g.monthly_salary : 0), 0);
+
+  openModal('Check before importing', `
+    <div style="margin-bottom:14px">
+      <span class="pill pill-new">${adds} new</span>
+      <span class="pill pill-upd">${upds} to update</span>
+      ${bad.length ? `<span class="pill pill-bad">${bad.length} skipped</span>` : ''}
+    </div>
+
+    ${good.length ? `
+      <div class="preview">
+        <table><thead><tr>
+          <th>Employee</th><th>Area</th><th>Designation</th>
+          <th class="r">Salary</th><th>Status</th><th></th>
+        </tr></thead><tbody>
+        ${good.map((g) => `<tr>
+          <td><div style="font-weight:500">${esc(g.name)}</div><div class="sub">${esc(g.emp_id)}</div></td>
+          <td>${esc(g.area)}</td>
+          <td><span class="tag ${g.designation === 'Full Time' ? 'tag-ft' : 'tag-pt'}">${esc(g.designation)}</span></td>
+          <td class="r mono">${money(g.monthly_salary)}</td>
+          <td class="sub">${g.active ? 'Active' : 'Inactive'}</td>
+          <td class="sub">${g._existing ? 'update' : 'new'}</td>
+        </tr>`).join('')}
+        </tbody></table>
+      </div>
+      <p class="note">Adds ${money(total)} of active salary to the register.</p>
+    ` : '<p style="font-size:14px">Nothing in this file can be imported.</p>'}
+
+    ${bad.length ? `
+      <p class="eyebrow" style="margin:18px 0 6px">Skipped rows</p>
+      <div class="preview">
+        <table><thead><tr><th>Sheet row</th><th>Who</th><th>Problem</th></tr></thead><tbody>
+        ${bad.map((b) => `<tr class="badrow">
+          <td class="mono">${b.line}</td>
+          <td>${esc(b.name || b.empId || '—')}</td>
+          <td>${esc(b.why)}</td>
+        </tr>`).join('')}
+        </tbody></table>
+      </div>
+      <p class="note">Fix these in your sheet and import again — the rest will just update, nothing gets duplicated.</p>
+    ` : ''}
+
+    <div id="importErr2" class="err hidden"></div>
+    <div class="foot">
+      <button class="btn btn-ghost" data-close>Cancel</button>
+      <button class="btn btn-green" id="doImport" ${good.length ? '' : 'disabled'}>
+        Import ${good.length} employee${good.length === 1 ? '' : 's'}
+      </button>
+    </div>`, 'lg');
+
+  $('doImport').onclick = async () => {
+    const btn = $('doImport');
+    btn.disabled = true; btn.textContent = 'Importing…';
+    const payload = good.map(({ _existing, ...rest }) => rest);
+
+    const { error } = await sb.from('employees')
+      .upsert(payload, { onConflict: 'emp_id' });
+
+    if (error) {
+      btn.disabled = false; btn.textContent = 'Try again';
+      const e2 = $('importErr2');
+      e2.textContent = `Import failed: ${error.message}`;
+      e2.classList.remove('hidden');
+      return;
+    }
+    closeModal();
+    await load();
+  };
+}
+
 /* ------------------------------ export ----------------------------- */
 $('exportBtn').onclick = () => {
   const rows = visible();
   const q = (x) => `"${String(x ?? '').replace(/"/g, '""')}"`;
-  const lines = [['Employee ID', 'Name', 'Bank', 'Account No', 'IFSC', 'Area',
-                  'Designation', 'Monthly Salary', 'Status'].join(',')];
+  const lines = [TEMPLATE_HEADERS.join(',')];
   rows.forEach((e) => lines.push([e.emp_id, e.name, e.bank_name, e.account_no, e.ifsc,
     e.area, e.designation, Number(e.monthly_salary || 0), e.active ? 'Active' : 'Inactive']
     .map(q).join(',')));
@@ -511,7 +775,7 @@ $('exportBtn').onclick = () => {
     <p style="margin:0 0 4px;font-size:14px">${rows.length} employee${rows.length === 1 ? '' : 's'} · ${esc(filterLabel())}</p>
     <p class="mono" style="margin:0 0 14px;color:var(--green)">Payout ${money(total)}</p>
     <textarea class="csv" readonly>${esc(csv)}</textarea>
-    <p class="note">Download the file, or select the text above and paste it into Excel or Google Sheets.</p>
+    <p class="note">The columns match the import format, so you can export, edit in Excel, and import straight back.</p>
     <div class="foot">
       <button class="btn btn-ghost" data-close>Close</button>
       <button class="btn btn-dark" id="dlBtn">Download CSV</button>
