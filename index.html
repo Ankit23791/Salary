@@ -388,7 +388,7 @@ function render() {
   $('tableWrap').innerHTML = `
     <table>
       <thead><tr>
-        <th>Employee</th><th>Bank details</th><th>Area</th><th>Designation</th><th>Type</th>
+        <th>Employee</th><th>Bank details</th><th>Area</th><th>Designation</th><th>Type</th><th>Payroll</th>
         <th class="r">Monthly salary</th><th>Status</th>${isMain() ? '<th class="r">Edit</th>' : ''}
       </tr></thead>
       <tbody>${rows.map(rowHtml).join('')}</tbody>
@@ -419,6 +419,12 @@ function rowHtml(e) {
       <td>${esc(e.area || '—')}</td>
       <td>${esc(e.designation || '—')}</td>
       <td><span class="tag ${ft ? 'tag-ft' : 'tag-pt'}">${esc(e.emp_type || '—')}</span></td>
+      <td class="sub">${[
+        e.on_roll === false ? 'off roll' : 'PF',
+        e.can_earn_extra === false ? 'no extra' : '',
+        e.on_attendance_app === false ? 'full month' : '',
+        e.manual_payroll ? 'manual' : '',
+      ].filter(Boolean).join(' · ')}</td>
       <td class="r mono">${money(e.monthly_salary)}</td>
       <td>${status}</td>
       ${isMain() ? `<td class="r" style="white-space:nowrap">
@@ -503,6 +509,26 @@ function openForm(emp) {
     </div>
     <label class="check"><input type="checkbox" id="fActive" ${v.active !== false ? 'checked' : ''}>
       Active — include this employee in the monthly payout</label>
+
+    <p class="eyebrow" style="margin:20px 0 8px">Payroll treatment</p>
+    <div class="grid2" style="gap:4px 14px">
+      <label class="check" style="margin:0"><input type="checkbox" id="fOnRoll" ${v.on_roll !== false ? 'checked' : ''}>
+        On roll — PF deducted, no TDS</label>
+      <label class="check" style="margin:0"><input type="checkbox" id="fExtra" ${v.can_earn_extra !== false ? 'checked' : ''}>
+        Can earn extra days</label>
+      <label class="check" style="margin:0"><input type="checkbox" id="fAttApp" ${v.on_attendance_app !== false ? 'checked' : ''}>
+        On the attendance app</label>
+      <label class="check" style="margin:0"><input type="checkbox" id="fManual" ${v.manual_payroll ? 'checked' : ''}>
+        Pay worked out by hand</label>
+    </div>
+    <div style="margin-top:12px;max-width:260px">
+      <label class="f eyebrow">Fixed monthly TDS (₹) — blank means 1%</label>
+      <input id="fTds" class="mono" type="number" min="0" placeholder="—"
+        value="${v.fixed_tds != null ? Number(v.fixed_tds) : ''}">
+    </div>
+    <p class="note">Off roll means 1% TDS on the pre-advance total and no PF.
+      Turning off “can earn extra days” makes unused week offs lapse.
+      “On the attendance app” off means a full month is always paid.</p>
     <div id="formErr" class="err hidden"></div>
     <div class="foot">
       <button class="btn btn-ghost" data-close>Cancel</button>
@@ -531,6 +557,11 @@ function openForm(emp) {
       emp_type: empType,
       monthly_salary: Number($('fSalary').value || 0),
       active: $('fActive').checked,
+      on_roll: $('fOnRoll').checked,
+      can_earn_extra: $('fExtra').checked,
+      on_attendance_app: $('fAttApp').checked,
+      manual_payroll: $('fManual').checked,
+      fixed_tds: $('fTds').value === '' ? null : Number($('fTds').value),
     };
     if (!payload.emp_id) return show('Employee ID is required.');
     if (!payload.name) return show('Employee name is required.');
@@ -1200,7 +1231,10 @@ function renderRun() {
         <div style="font-family:Georgia,serif;font-size:24px">${esc(currentRun.label)}</div>
         <div class="sub">${done} of 5 sheets uploaded</div>
       </div>
-      <button class="btn btn-ghost" id="allTplBtn2">See all formats</button>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-ghost" id="allTplBtn2">See all formats</button>
+        <button class="btn btn-green" id="salaryBtn">Salary sheet</button>
+      </div>
     </section>
 
     <div class="sheets">
@@ -1236,6 +1270,7 @@ function renderRun() {
 
   $('backBtn').onclick = () => { currentRun = null; renderRunList(); };
   $('allTplBtn2').onclick = showAllFormats;
+  $('salaryBtn').onclick = showSalary;
   document.querySelectorAll('[data-tpl]').forEach((b) => b.onclick = () => downloadTemplate(b.dataset.tpl));
   document.querySelectorAll('[data-up]').forEach((b) => b.onclick = () => pickSheet(b.dataset.up));
   document.querySelectorAll('[data-view]').forEach((b) => b.onclick = () => viewSheet(b.dataset.view));
@@ -1764,6 +1799,319 @@ function removeSheet(kind) {
     closeModal();
     await openRun(currentRun.id);
   };
+}
+
+
+/* =====================================================================
+   SALARY — the calculation itself
+   Pure functions. Same code that was tested against the July sheet.
+   ===================================================================== */
+
+function entitlement(present, sundays) {
+  if (present <= 0)  return 0;
+  if (present <= 5)  return 0;
+  if (present <= 11) return 1;
+  if (present <= 17) return 2;
+  if (present <= 23) return 3;
+  return sundays;
+}
+
+const isP = (c) => String(c || '').trim().toUpperCase().startsWith('P');
+const isA = (c) => String(c || '').trim().toUpperCase().startsWith('A');
+
+function calcSalary(emp, att, inp, period) {
+  const cal = monthCalendar(period);
+  const gross = Number(emp.monthly_salary) || 0;
+  const perDay = cal.days ? gross / cal.days : 0;
+  const base = { days_in_month: cal.days, per_day: perDay, gross, notes: [] };
+  const zero = {
+    present: 0, week_off: 0, paid_leave: 0, absent: 0, paid_holiday: 0,
+    extra_days: 0, holidays_worked: 0, amount: 0, extra_amount: 0, pf: 0,
+    after_pf: 0, ot_hours: 0, ot_amount: 0, incentive: 0, expenses: 0,
+    before_advance: 0, advance: 0, tds: 0, final: 0,
+  };
+
+  if (emp.manual_payroll)
+    return { ...base, ...zero, flag: 'manual', notes: ['Worked out by hand'] };
+
+  const holidays = (inp.holidayDays || []).filter((d) => d >= 1 && d <= cal.days);
+  let present, weekOff, paidLeave, absent, paidHoliday, extraDays, worked = 0;
+
+  if (!emp.on_attendance_app) {
+    present = cal.days - holidays.length;
+    paidHoliday = holidays.length;
+    weekOff = 0; paidLeave = 0; absent = 0; extraDays = 0;
+    base.notes.push('Not on the attendance app — full month');
+  } else if (!att || !att.days) {
+    return { ...base, ...zero, flag: 'no-attendance', notes: ['No attendance row'] };
+  } else {
+    present = 0;
+    const aDays = [];
+    for (let d = 1; d <= cal.days; d++) {
+      const c = att.days[d];
+      if (isP(c)) { present++; if (holidays.includes(d)) worked++; }
+      else if (isA(c)) aDays.push(d);
+    }
+
+    // holidays taken off first — they don't consume week-off entitlement.
+    // A holiday that was worked stays a present day and is paid as extra.
+    paidHoliday = aDays.filter((d) => holidays.includes(d)).length;
+    let rest = aDays.filter((d) => !holidays.includes(d));
+
+    const ent = entitlement(present, cal.sundays.length);
+    weekOff = Math.min(ent, rest.length);
+    rest = rest.slice(weekOff);
+
+    const approved = Math.max(0, Number(inp.paidLeaveApproved) || 0);
+    paidLeave = Math.min(approved, rest.length);
+    if (approved > paidLeave)
+      base.notes.push(`${approved - paidLeave} approved leave unused`);
+
+    absent = rest.length - paidLeave;
+
+    extraDays = emp.can_earn_extra ? ent - weekOff : 0;
+    if (!emp.can_earn_extra && ent - weekOff > 0)
+      base.notes.push(`${ent - weekOff} week off lapsed`);
+  }
+
+  const amount = perDay * (present + weekOff + paidLeave + paidHoliday);
+  const extraAmount = perDay * (extraDays + worked);
+
+  // OT is recomputed from hours — the sheet's own OT column is ignored
+  const otHours = Math.max(0, (Number(att?.total_hrs) || 0) - present * 9);
+  const otAmount = (perDay / 9) * otHours;
+
+  const pf = emp.on_roll
+    ? Math.min(1800, (amount * 0.5 + extraAmount + otAmount) * 0.12) : 0;
+
+  const afterPf = amount - pf + extraAmount;
+  const incentive = Number(inp.incentive) || 0;
+  const expenses = Number(inp.expenses) || 0;
+  const beforeAdvance = afterPf + otAmount + incentive + expenses;
+
+  const tds = emp.on_roll ? 0
+    : (emp.fixed_tds != null ? Number(emp.fixed_tds) : beforeAdvance * 0.01);
+
+  const advance = Number(inp.advances) || 0;
+  const final = beforeAdvance - advance - tds;
+
+  if (final < 0) base.notes.push('Advance exceeds pay — check this row');
+
+  return { ...base, present, week_off: weekOff, paid_leave: paidLeave, absent,
+    paid_holiday: paidHoliday, extra_days: extraDays, holidays_worked: worked,
+    amount, extra_amount: extraAmount, pf, after_pf: afterPf,
+    ot_hours: otHours, ot_amount: otAmount, incentive, expenses,
+    before_advance: beforeAdvance, advance, tds, final };
+}
+
+/* ---------------- gather this month's inputs per employee ------------ */
+async function buildSalary() {
+  const { data, error } = await sb.from('payroll_rows')
+    .select('kind, emp_id, data, matched').eq('run_id', currentRun.id);
+  if (error) throw new Error(error.message);
+
+  const rows = data || [];
+  const by = (k) => rows.filter((r) => r.kind === k);
+  const key = (id) => String(id ?? '').toLowerCase();
+
+  const att = new Map();
+  by('attendance').forEach((r) => att.set(key(r.emp_id), r.data));
+
+  const leave = new Map();
+  by('paid_leave').forEach((r) =>
+    leave.set(key(r.emp_id), (leave.get(key(r.emp_id)) || 0) + (Number(r.data.days) || 0)));
+
+  const sumBy = (kind) => {
+    const m = new Map();
+    by(kind).forEach((r) => {
+      const k = key(r.emp_id);
+      m.set(k, (m.get(k) || 0) + (Number(r.data.amount) || 0));
+    });
+    return m;
+  };
+  const inc = sumBy('incentive');
+  const exp = sumBy('expense');
+  const adv = sumBy('advance');
+
+  const advBy = new Map();
+  by('advance').forEach((r) => {
+    const k = key(r.emp_id);
+    const who = String(r.data.given_by || '').trim();
+    if (!who) return;
+    if (!advBy.has(k)) advBy.set(k, []);
+    advBy.get(k).push(who);
+  });
+
+  // holidays → day numbers inside this month
+  const holidayDays = [];
+  const strayHolidays = [];
+  by('holiday').forEach((r) => {
+    const iso = String(r.data.date || '');
+    if (iso.slice(0, 7) === currentRun.period) holidayDays.push(Number(iso.slice(8, 10)));
+    else if (iso) strayHolidays.push(iso);
+  });
+
+  // anything uploaded for an ID that isn't in the register
+  const knownIds = new Set(staff.map((e) => key(e.emp_id)));
+  const orphans = [...new Set(rows
+    .filter((r) => r.emp_id && !knownIds.has(key(r.emp_id)))
+    .map((r) => r.emp_id))];
+
+  const out = staff
+    .filter((e) => e.active)
+    .map((e) => {
+      const k = key(e.emp_id);
+      const calc = calcSalary(e, att.get(k), {
+        paidLeaveApproved: leave.get(k) || 0,
+        incentive: inc.get(k) || 0,
+        expenses: exp.get(k) || 0,
+        advances: adv.get(k) || 0,
+        holidayDays,
+      }, currentRun.period);
+      return { emp: e, calc, advanceBy: (advBy.get(k) || []).join(', ') };
+    })
+    .sort((a, b) => a.emp.name.localeCompare(b.emp.name));
+
+  return { out, holidayDays, strayHolidays, orphans,
+           uploaded: new Set(rows.map((r) => r.kind)) };
+}
+
+/* ------------------------------ view -------------------------------- */
+async function showSalary() {
+  $('payrollView').innerHTML = '<div class="empty">Working out the salaries…</div>';
+  let res;
+  try { res = await buildSalary(); }
+  catch (e) { $('payrollView').innerHTML = `<div class="empty">Couldn't calculate: ${esc(e.message)}</div>`; return; }
+
+  const { out, holidayDays, strayHolidays, orphans, uploaded } = res;
+  const missingSheets = Object.keys(SHEET_KINDS).filter((k) => !uploaded.has(k));
+  const noAtt = out.filter((r) => r.calc.flag === 'no-attendance');
+  const negatives = out.filter((r) => r.calc.final < 0);
+  const total = out.reduce((s, r) => s + r.calc.final, 0);
+
+  const n = (v) => v ? Math.round(v).toLocaleString('en-IN') : '';
+
+  $('payrollView').innerHTML = `
+    <section class="card runbar">
+      <div>
+        <button class="linkbtn" id="backRun"
+          style="color:var(--ink-soft);padding:0;margin-bottom:6px">← ${esc(currentRun.label)}</button>
+        <div class="eyebrow">Salary sheet — ${esc(currentRun.label)}</div>
+        <div class="payout">${money(total)}</div>
+        <div class="note">${out.length} active staff ·
+          ${holidayDays.length} holiday${holidayDays.length === 1 ? '' : 's'}
+          ${holidayDays.length ? `(${holidayDays.sort((a, b) => a - b).join(', ')})` : ''}</div>
+      </div>
+      <button class="btn btn-green" id="dlSalary">Download Excel</button>
+    </section>
+
+    ${missingSheets.length ? `<p style="font-size:13.5px;color:var(--amber);margin:0 0 10px">
+      Not uploaded yet: ${missingSheets.map((k) => esc(SHEET_KINDS[k].label)).join(', ')}.
+      Those amounts are counted as zero.
+    </p>` : ''}
+    ${noAtt.length ? `<p style="font-size:13.5px;color:var(--rose);margin:0 0 10px">
+      ${noAtt.length} active employee${noAtt.length === 1 ? ' has' : 's have'} no attendance row
+      and come out at zero: ${esc(noAtt.slice(0, 8).map((r) => r.emp.name).join(', '))}${noAtt.length > 8 ? '…' : ''}
+    </p>` : ''}
+    ${orphans.length ? `<p style="font-size:13.5px;color:var(--amber);margin:0 0 10px">
+      Uploaded rows for ${orphans.length} Employee ID${orphans.length === 1 ? '' : 's'} not in the
+      register — nobody is paid for these: ${esc(orphans.slice(0, 12).join(', '))}${orphans.length > 12 ? '…' : ''}
+    </p>` : ''}
+    ${strayHolidays.length ? `<p style="font-size:13.5px;color:var(--amber);margin:0 0 10px">
+      ${strayHolidays.length} holiday date${strayHolidays.length === 1 ? ' is' : 's are'} outside
+      ${esc(currentRun.label)} and were ignored: ${esc(strayHolidays.join(', '))}
+    </p>` : ''}
+    ${negatives.length ? `<p style="font-size:13.5px;color:var(--rose);margin:0 0 10px">
+      ${negatives.length} row${negatives.length === 1 ? '' : 's'} come out negative — the advance is
+      bigger than the pay. Shown as-is rather than zeroed, so you can see what's owed.
+    </p>` : ''}
+
+    <div class="wrap">
+      <table>
+        <thead><tr>
+          <th>Employee</th><th>Designation</th><th class="r">Gross</th>
+          <th class="r">P</th><th class="r">Off</th><th class="r">Leave</th>
+          <th class="r">Abs</th><th class="r">Hol</th><th class="r">Extra</th>
+          <th class="r">Amount</th><th class="r">PF</th><th class="r">OT hrs</th>
+          <th class="r">OT amt</th><th class="r">Incentive</th><th class="r">Expense</th>
+          <th class="r">Advance</th><th class="r">TDS</th><th class="r">Final</th>
+        </tr></thead>
+        <tbody>
+        ${out.map(({ emp, calc }) => {
+          const warn = calc.flag === 'no-attendance' || calc.final < 0;
+          return `<tr${warn ? ' class="badrow"' : ''}>
+            <td><div style="font-weight:500">${esc(emp.name)}</div>
+                <div class="sub">${esc(emp.emp_id)}${calc.notes.length
+                  ? ` · <span style="color:var(--amber)">${esc(calc.notes.join('; '))}</span>` : ''}</div></td>
+            <td class="sub">${esc(emp.designation || '—')}</td>
+            <td class="r mono">${n(calc.gross)}</td>
+            <td class="r mono">${calc.present}</td>
+            <td class="r mono">${calc.week_off}</td>
+            <td class="r mono">${calc.paid_leave}</td>
+            <td class="r mono">${calc.absent || ''}</td>
+            <td class="r mono">${calc.paid_holiday || ''}</td>
+            <td class="r mono">${calc.extra_days || ''}</td>
+            <td class="r mono">${n(calc.amount)}</td>
+            <td class="r mono">${n(calc.pf)}</td>
+            <td class="r mono">${calc.ot_hours ? calc.ot_hours.toFixed(1) : ''}</td>
+            <td class="r mono">${n(calc.ot_amount)}</td>
+            <td class="r mono">${n(calc.incentive)}</td>
+            <td class="r mono">${n(calc.expenses)}</td>
+            <td class="r mono">${n(calc.advance)}</td>
+            <td class="r mono">${n(calc.tds)}</td>
+            <td class="r mono" style="font-weight:600">${n(calc.final)}</td>
+          </tr>`;
+        }).join('')}
+        </tbody>
+      </table>
+    </div>`;
+
+  $('backRun').onclick = () => openRun(currentRun.id);
+  $('dlSalary').onclick = () => exportSalary(out);
+}
+
+/* ----------------------------- export ------------------------------- */
+async function exportSalary(out) {
+  const XLSX = await loadSheetJS();
+  const head = ['S.No', 'Employee ID', 'Employee Name', 'Designation', 'Area',
+    'Monthly Gross Salary', 'Total Days', 'Present', 'Week Off', 'Paid Leaves',
+    'Absent', 'Paid Holiday', 'No of Extra Days', 'Extra Amount', 'Amount',
+    'PF Amount', 'Amount after PF', 'Overtime Hours', 'Overtime Amount',
+    'Incentive', 'Expense/Reimbursement', 'Total Amt before Advance',
+    'Advance Given', 'Advance Given By', 'Total Amount', 'TDS Deduction',
+    'Final Amount', 'Bank', 'Account No', 'IFSC', 'Notes'];
+
+  const r2 = (v) => Math.round((Number(v) || 0) * 100) / 100;
+  const aoa = [head];
+  out.forEach(({ emp, calc, advanceBy }, i) => aoa.push([
+    i + 1, String(emp.emp_id), emp.name, emp.designation || '', emp.area || '',
+    r2(calc.gross), calc.days_in_month, calc.present, calc.week_off,
+    calc.paid_leave, calc.absent, calc.paid_holiday, calc.extra_days,
+    r2(calc.extra_amount), r2(calc.amount), r2(calc.pf), r2(calc.after_pf),
+    r2(calc.ot_hours), r2(calc.ot_amount), r2(calc.incentive), r2(calc.expenses),
+    r2(calc.before_advance), r2(calc.advance), advanceBy || '',
+    r2(calc.before_advance - calc.advance), r2(calc.tds), r2(calc.final),
+    emp.bank_name || '', String(emp.account_no || ''), emp.ifsc || '',
+    calc.notes.join('; '),
+  ]));
+  aoa.push([]);
+  aoa.push(['', '', 'TOTAL', '', '', '', '', '', '', '', '', '', '', '', '', '',
+    '', '', '', '', '', '', '', '', '', '',
+    r2(out.reduce((s, r) => s + r.calc.final, 0))]);
+
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  // identifiers stay text so Excel can't reformat account numbers
+  ['B', 'AC', 'AD'].forEach((col) => {
+    for (let r = 2; r <= aoa.length; r++) {
+      const c = ws[col + r];
+      if (c && c.v !== '') { c.t = 's'; c.v = String(c.v); c.z = '@'; }
+    }
+  });
+  ws['!cols'] = head.map((h) => ({ wch: Math.max(10, Math.min(24, h.length + 3)) }));
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Salary');
+  XLSX.writeFile(wb, `salary-${currentRun.period}.xlsx`);
 }
 
 /* ------------------------------ modal ------------------------------ */
