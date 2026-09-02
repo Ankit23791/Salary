@@ -302,7 +302,7 @@ async function start() {
   $('addBtn').classList.toggle('hidden', !isMain());
   $('importBtn').classList.toggle('hidden', !isMain());
 
-  await load();
+  await Promise.all([load(), loadSettings()]);
 }
 
 /* ------------------------------ data ------------------------------- */
@@ -2009,7 +2009,11 @@ async function showSalary() {
           ${holidayDays.length} holiday${holidayDays.length === 1 ? '' : 's'}
           ${holidayDays.length ? `(${holidayDays.sort((a, b) => a - b).join(', ')})` : ''}</div>
       </div>
-      <button class="btn btn-green" id="dlSalary">Download Excel</button>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        ${isMain() ? '<button class="btn btn-ghost" id="slipSet">Payslip details</button>' : ''}
+        <button class="btn btn-ghost" id="printAll">Print all payslips</button>
+        <button class="btn btn-green" id="dlSalary">Download Excel</button>
+      </div>
     </section>
 
     ${missingSheets.length ? `<p style="font-size:13.5px;color:var(--amber);margin:0 0 10px">
@@ -2041,7 +2045,7 @@ async function showSalary() {
           <th class="r">Abs</th><th class="r">Hol</th><th class="r">Extra</th>
           <th class="r">Amount</th><th class="r">PF</th><th class="r">OT hrs</th>
           <th class="r">OT amt</th><th class="r">Incentive</th><th class="r">Expense</th>
-          <th class="r">Advance</th><th class="r">TDS</th><th class="r">Final</th>
+          <th class="r">Advance</th><th class="r">TDS</th><th class="r">Final</th><th></th>
         </tr></thead>
         <tbody>
         ${out.map(({ emp, calc }) => {
@@ -2067,6 +2071,8 @@ async function showSalary() {
             <td class="r mono">${n(calc.advance)}</td>
             <td class="r mono">${n(calc.tds)}</td>
             <td class="r mono" style="font-weight:600">${n(calc.final)}</td>
+            <td class="r"><button class="iconbtn" data-slip="${esc(emp.emp_id)}"
+              title="Payslip">🧾</button></td>
           </tr>`;
         }).join('')}
         </tbody>
@@ -2075,6 +2081,10 @@ async function showSalary() {
 
   $('backRun').onclick = () => openRun(currentRun.id);
   $('dlSalary').onclick = () => exportSalary(out);
+  if ($('slipSet')) $('slipSet').onclick = openPayslipSettings;
+  $('printAll').onclick = () => printSlips(out.filter((r) => r.calc.flag !== 'manual'));
+  document.querySelectorAll('[data-slip]').forEach((b) =>
+    b.onclick = () => openPayslip(out.find((r) => String(r.emp.emp_id) === b.dataset.slip)));
 }
 
 /* ----------------------------- export ------------------------------- */
@@ -2580,6 +2590,236 @@ async function parseKyc(file) {
     closeModal();
     await loadKyc();
     renderKyc();
+  };
+}
+
+
+/* =====================================================================
+   PAYSLIPS — one per employee, from the same calculation.
+   ===================================================================== */
+
+let settings = { company_name: 'Rio', company_address: '', payslip_footer: '' };
+
+async function loadSettings() {
+  const { data } = await sb.from('app_settings').select('key, value');
+  (data || []).forEach((r) => { settings[r.key] = r.value || ''; });
+}
+
+const W_ONES = ['', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight',
+  'Nine', 'Ten', 'Eleven', 'Twelve', 'Thirteen', 'Fourteen', 'Fifteen', 'Sixteen',
+  'Seventeen', 'Eighteen', 'Nineteen'];
+const W_TENS = ['', '', 'Twenty', 'Thirty', 'Forty', 'Fifty', 'Sixty', 'Seventy',
+  'Eighty', 'Ninety'];
+const w2 = (n) => n < 20 ? W_ONES[n] : W_TENS[Math.floor(n / 10)] + (n % 10 ? ' ' + W_ONES[n % 10] : '');
+const w3 = (n) => (n >= 100 ? W_ONES[Math.floor(n / 100)] + ' Hundred' + (n % 100 ? ' ' : '') : '')
+                + (n % 100 ? w2(n % 100) : '');
+
+function inWords(amount) {
+  const neg = amount < 0;
+  let n = Math.floor(Math.abs(amount));
+  const paise = Math.round((Math.abs(amount) - n) * 100);
+  if (n === 0 && !paise) return 'Zero Rupees Only';
+  const parts = [];
+  const cr = Math.floor(n / 10000000); n %= 10000000;
+  const la = Math.floor(n / 100000);   n %= 100000;
+  const th = Math.floor(n / 1000);     n %= 1000;
+  if (cr) parts.push(w3(cr) + ' Crore');
+  if (la) parts.push(w2(la) + ' Lakh');
+  if (th) parts.push(w2(th) + ' Thousand');
+  if (n)  parts.push(w3(n));
+  let s = (neg ? 'Minus ' : '') + parts.join(' ') + ' Rupees';
+  if (paise) s += ' and ' + w2(paise) + ' Paise';
+  return s + ' Only';
+}
+
+const rup = (v) => '₹' + (Math.round((Number(v) || 0) * 100) / 100)
+  .toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const last4 = (v) => {
+  const d = String(v || '').replace(/\s/g, '');
+  return d ? '••••' + d.slice(-4) : '—';
+};
+
+/* --------------------------- one payslip ---------------------------- */
+function payslipHtml({ emp, calc, advanceBy }, period, label) {
+  const earn = [
+    ['Salary for days paid', calc.amount],
+    calc.extra_amount ? [`Extra days (${calc.extra_days}${calc.holidays_worked ? ` + ${calc.holidays_worked} holiday worked` : ''})`, calc.extra_amount] : null,
+    calc.ot_amount ? [`Overtime (${calc.ot_hours.toFixed(1)} hrs)`, calc.ot_amount] : null,
+    calc.incentive ? ['Incentive', calc.incentive] : null,
+    calc.expenses ? ['Expenses / reimbursement', calc.expenses] : null,
+  ].filter(Boolean);
+
+  const ded = [
+    calc.pf ? ['Provident Fund', calc.pf] : null,
+    calc.tds ? ['TDS', calc.tds] : null,
+    calc.advance ? [`Advance / penalty${advanceBy ? ` (${advanceBy})` : ''}`, calc.advance] : null,
+  ].filter(Boolean);
+
+  const totalEarn = earn.reduce((s, [, v]) => s + v, 0);
+  const totalDed = ded.reduce((s, [, v]) => s + v, 0);
+
+  return `
+  <div class="slip">
+    <div class="slip-head">
+      <div>
+        <div class="co">${esc(settings.company_name || 'Company')}</div>
+        ${settings.company_address ? `<div class="co-addr">${esc(settings.company_address)}</div>` : ''}
+      </div>
+      <div class="slip-period">
+        <div class="lbl">Payslip for</div>
+        <div class="per">${esc(label)}</div>
+      </div>
+    </div>
+
+    <table class="who">
+      <tr><td class="k">Name</td><td class="v">${esc(emp.name)}</td>
+          <td class="k">Employee ID</td><td class="v">${esc(emp.emp_id)}</td></tr>
+      <tr><td class="k">Designation</td><td class="v">${esc(emp.designation || '—')}</td>
+          <td class="k">Area</td><td class="v">${esc(emp.area || '—')}</td></tr>
+      <tr><td class="k">Bank</td><td class="v">${esc(emp.bank_name || '—')}</td>
+          <td class="k">Account</td><td class="v">${esc(last4(emp.account_no))}</td></tr>
+    </table>
+
+    <table class="days">
+      <tr>
+        <th>Days in month</th><th>Present</th><th>Week off</th><th>Paid leave</th>
+        <th>Holiday</th><th>Absent</th><th>Extra days</th>
+      </tr>
+      <tr>
+        <td>${calc.days_in_month}</td><td>${calc.present}</td><td>${calc.week_off}</td>
+        <td>${calc.paid_leave}</td><td>${calc.paid_holiday}</td>
+        <td>${calc.absent}</td><td>${calc.extra_days}</td>
+      </tr>
+    </table>
+
+    <div class="cols">
+      <table class="money">
+        <tr><th colspan="2">Earnings</th></tr>
+        ${earn.map(([k, v]) => `<tr><td>${esc(k)}</td><td class="r">${rup(v)}</td></tr>`).join('')}
+        <tr class="tot"><td>Total earnings</td><td class="r">${rup(totalEarn)}</td></tr>
+      </table>
+
+      <table class="money">
+        <tr><th colspan="2">Deductions</th></tr>
+        ${ded.length ? ded.map(([k, v]) => `<tr><td>${esc(k)}</td><td class="r">${rup(v)}</td></tr>`).join('')
+                     : '<tr><td colspan="2" class="none">None</td></tr>'}
+        <tr class="tot"><td>Total deductions</td><td class="r">${rup(totalDed)}</td></tr>
+      </table>
+    </div>
+
+    <div class="net">
+      <div>
+        <div class="lbl">Net pay</div>
+        <div class="words">${esc(inWords(calc.final))}</div>
+      </div>
+      <div class="amt">${rup(calc.final)}</div>
+    </div>
+
+    ${calc.notes.length ? `<div class="notes">${esc(calc.notes.join(' · '))}</div>` : ''}
+    ${settings.payslip_footer ? `<div class="foot-note">${esc(settings.payslip_footer)}</div>` : ''}
+  </div>`;
+}
+
+const SLIP_CSS = `
+  .slip{background:#fff;color:#1B2A2F;border:1px solid #D7DDD9;border-radius:8px;
+        padding:22px;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+        font-size:12.5px;max-width:720px;margin:0 auto 18px}
+  .slip-head{display:flex;justify-content:space-between;align-items:flex-start;
+             border-bottom:2px solid #1B2A2F;padding-bottom:12px;margin-bottom:14px}
+  .slip .co{font-family:Georgia,serif;font-size:21px}
+  .slip .co-addr{font-size:11px;color:#7A8C90;margin-top:2px}
+  .slip-period{text-align:right}
+  .slip .lbl{font-size:10px;text-transform:uppercase;letter-spacing:.1em;color:#7A8C90}
+  .slip .per{font-size:15px;font-weight:600}
+  .slip table{width:100%;border-collapse:collapse}
+  .slip .who td{padding:4px 0;font-size:12px}
+  .slip .who .k{color:#7A8C90;width:15%}
+  .slip .who .v{font-weight:500;width:35%}
+  .slip .days{margin:14px 0;border:1px solid #D7DDD9}
+  .slip .days th{background:#F5F7F5;font-size:10px;text-transform:uppercase;
+                 letter-spacing:.06em;color:#3D5158;font-weight:500;padding:6px 4px;
+                 border:1px solid #D7DDD9;text-align:center}
+  .slip .days td{padding:7px 4px;text-align:center;border:1px solid #D7DDD9;
+                 font-family:ui-monospace,Menlo,monospace}
+  .slip .cols{display:flex;gap:14px}
+  .slip .money{border:1px solid #D7DDD9;flex:1}
+  .slip .money th{background:#F5F7F5;text-align:left;padding:7px 10px;font-size:11px;
+                  text-transform:uppercase;letter-spacing:.06em;color:#3D5158}
+  .slip .money td{padding:6px 10px;border-top:1px solid #EEF1EE}
+  .slip .money .r{text-align:right;font-family:ui-monospace,Menlo,monospace}
+  .slip .money .tot td{font-weight:600;background:#FAFBFA}
+  .slip .money .none{color:#7A8C90}
+  .slip .net{display:flex;justify-content:space-between;align-items:center;
+             background:#E3F1EC;border:1px solid #0F7B5F;border-radius:6px;
+             padding:12px 16px;margin-top:14px}
+  .slip .net .words{font-size:11.5px;color:#0F7B5F;max-width:440px}
+  .slip .net .amt{font-family:ui-monospace,Menlo,monospace;font-size:22px;color:#0F7B5F}
+  .slip .notes{margin-top:10px;font-size:11px;color:#9A6410}
+  .slip .foot-note{margin-top:14px;padding-top:10px;border-top:1px solid #EEF1EE;
+                   font-size:10.5px;color:#7A8C90;text-align:center}
+  @media print{
+    body{background:#fff;margin:0}
+    .slip{border:0;page-break-after:always;max-width:none;margin:0;padding:14mm}
+    .slip:last-child{page-break-after:auto}
+    .no-print{display:none !important}
+  }`;
+
+function openPayslip(row) {
+  openModal(`Payslip — ${row.emp.name}`, `
+    <style>${SLIP_CSS}</style>
+    ${payslipHtml(row, currentRun.period, currentRun.label)}
+    <div class="foot">
+      <button class="btn btn-ghost" data-close>Close</button>
+      <button class="btn btn-green" id="printSlip">Print / save as PDF</button>
+    </div>`, 'lg');
+  $('printSlip').onclick = () => printSlips([row]);
+}
+
+function printSlips(rows) {
+  const w = window.open('', '_blank');
+  if (!w) return alert('Your browser blocked the print window. Allow pop-ups for this site.');
+  w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8">
+    <title>Payslips — ${esc(currentRun.label)}</title><style>
+    body{background:#EFF1EE;margin:0;padding:18px}${SLIP_CSS}</style></head><body>
+    ${rows.map((r) => payslipHtml(r, currentRun.period, currentRun.label)).join('')}
+    </body></html>`);
+  w.document.close();
+  w.focus();
+  setTimeout(() => w.print(), 400);
+}
+
+/* --------------------------- settings ------------------------------- */
+function openPayslipSettings() {
+  openModal('Payslip details', `
+    <label class="f eyebrow">Company name</label>
+    <input id="setName" value="${esc(settings.company_name || '')}" placeholder="Rio">
+    <label class="f eyebrow" style="margin-top:14px">Address (optional)</label>
+    <input id="setAddr" value="${esc(settings.company_address || '')}"
+      placeholder="Sector 101, Noida">
+    <label class="f eyebrow" style="margin-top:14px">Footer line</label>
+    <input id="setFoot" value="${esc(settings.payslip_footer || '')}">
+    <div id="setErr" class="err hidden"></div>
+    <div class="foot">
+      <button class="btn btn-ghost" data-close>Cancel</button>
+      <button class="btn btn-green" id="saveSet">Save</button>
+    </div>`, 'sm');
+
+  $('saveSet').onclick = async () => {
+    const { data: { user } } = await sb.auth.getUser();
+    const rows = [
+      { key: 'company_name', value: $('setName').value.trim(), updated_by: user.id },
+      { key: 'company_address', value: $('setAddr').value.trim(), updated_by: user.id },
+      { key: 'payslip_footer', value: $('setFoot').value.trim(), updated_by: user.id },
+    ];
+    const { error } = await sb.from('app_settings').upsert(rows, { onConflict: 'key' });
+    if (error) {
+      const e = $('setErr');
+      e.textContent = `Couldn't save: ${error.message}`;
+      e.classList.remove('hidden');
+      return;
+    }
+    await loadSettings();
+    closeModal();
   };
 }
 
