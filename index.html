@@ -43,7 +43,7 @@
        align-items:center;justify-content:space-between;gap:16px}
   .bar .wordmark{color:#fff;font-size:22px}
   .whoami{font-family:var(--mono);font-size:11px;background:#2C4046;color:#CFE0DA;
-          padding:4px 9px;border-radius:5px}
+          padding:4px 9px;border-radius:5px;white-space:nowrap}
   .linkbtn{background:none;border:0;color:#fff;opacity:.75;cursor:pointer;
            font-size:14px;font-family:inherit}
   .linkbtn:hover{opacity:1}
@@ -180,6 +180,7 @@
         <nav class="nav">
           <button id="navStaff" class="on">Staff</button>
           <button id="navPayroll">Payroll</button>
+          <button id="navKyc">Documents</button>
         </nav>
       </div>
       <div style="display:flex;align-items:center;gap:14px">
@@ -230,11 +231,13 @@
    </div>
 
    <div id="payrollView" class="hidden"></div>
+   <div id="kycView" class="hidden"></div>
   </main>
 </div>
 
 <div id="modalHost"></div>
 <input type="file" id="fileInput" accept=".xlsx,.xls,.csv" class="hidden" />
+<input type="file" id="docInput" accept="image/*,application/pdf" class="hidden" />
 
 <script type="module">
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
@@ -244,7 +247,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
    Project Settings → API Keys. Use the anon / publishable key.
    =================================================================== */
 const SUPABASE_URL = 'https://vphmuuhnfqluvhtdpbhb.supabase.co';
-const SUPABASE_ANON_KEY = 'sb_publishable_2hAro_6cC50VDF77uiQHTw_QohUNhKe';
+const SUPABASE_ANON_KEY = 'PASTE_YOUR_PUBLISHABLE_KEY_HERE';
 
 const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
@@ -1114,13 +1117,17 @@ let runFiles = [];
 /* ------------------------------ nav -------------------------------- */
 $('navStaff').onclick = () => showView('staff');
 $('navPayroll').onclick = () => showView('payroll');
+$('navKyc').onclick = () => showView('kyc');
 
 function showView(v) {
-  $('navStaff').classList.toggle('on', v === 'staff');
-  $('navPayroll').classList.toggle('on', v === 'payroll');
+  ['staff', 'payroll', 'kyc'].forEach((n) => {
+    $('nav' + n[0].toUpperCase() + n.slice(1)).classList.toggle('on', v === n);
+  });
   $('staffView').classList.toggle('hidden', v !== 'staff');
-  $('payrollView').classList.toggle('hidden', v === 'staff');
+  $('payrollView').classList.toggle('hidden', v !== 'payroll');
+  $('kycView').classList.toggle('hidden', v !== 'kyc');
   if (v === 'payroll') { if (!staff.length) load().then(loadRuns); else loadRuns(); }
+  if (v === 'kyc') showKyc();
 }
 
 /* ----------------------------- runs -------------------------------- */
@@ -1229,7 +1236,7 @@ function renderRun() {
         <button class="linkbtn" id="backBtn"
           style="color:var(--ink-soft);padding:0;margin-bottom:6px">← All months</button>
         <div style="font-family:Georgia,serif;font-size:24px">${esc(currentRun.label)}</div>
-        <div class="sub">${done} of 5 sheets uploaded</div>
+        <div class="sub">${done} of ${Object.keys(SHEET_KINDS).length} sheets uploaded</div>
       </div>
       <div style="display:flex;gap:8px">
         <button class="btn btn-ghost" id="allTplBtn2">See all formats</button>
@@ -2112,6 +2119,468 @@ async function exportSalary(out) {
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Salary');
   XLSX.writeFile(wb, `salary-${currentRun.period}.xlsx`);
+}
+
+
+/* =====================================================================
+   KYC — Aadhaar and PAN numbers, plus document images.
+   Both accounts can collect and correct these.
+   ===================================================================== */
+
+const DOC_KINDS = {
+  aadhaar_front: 'Aadhaar — front',
+  aadhaar_back:  'Aadhaar — back',
+  pan:           'PAN card',
+  bank:          'Bank proof',
+  other:         'Other',
+};
+
+// Verhoeff check digit — the scheme Aadhaar uses. Catches typos and swaps.
+const VD = [[0,1,2,3,4,5,6,7,8,9],[1,2,3,4,0,6,7,8,9,5],[2,3,4,0,1,7,8,9,5,6],
+[3,4,0,1,2,8,9,5,6,7],[4,0,1,2,3,9,5,6,7,8],[5,9,8,7,6,0,4,3,2,1],
+[6,5,9,8,7,1,0,4,3,2],[7,6,5,9,8,2,1,0,4,3],[8,7,6,5,9,3,2,1,0,4],
+[9,8,7,6,5,4,3,2,1,0]];
+const VP = [[0,1,2,3,4,5,6,7,8,9],[1,5,7,6,2,8,3,0,9,4],[5,8,0,3,7,9,6,1,4,2],
+[8,9,1,6,0,4,3,5,2,7],[9,4,5,3,1,2,6,8,7,0],[4,2,8,6,5,7,3,9,0,1],
+[2,7,9,3,8,0,6,4,1,5],[7,0,4,6,9,1,3,2,5,8]];
+
+function aadhaarValid(v) {
+  const d = String(v || '').replace(/\D/g, '');
+  if (d.length !== 12 || d[0] === '0' || d[0] === '1') return false;
+  let c = 0;
+  const r = d.split('').reverse();
+  for (let i = 0; i < r.length; i++) c = VD[c][VP[i % 8][Number(r[i])]];
+  return c === 0;
+}
+const panValid = (v) => /^[A-Z]{5}[0-9]{4}[A-Z]$/.test(String(v || '').toUpperCase().trim());
+
+const cleanAadhaar = (v) => String(v || '').replace(/\D/g, '');
+const maskAadhaar = (v) => {
+  const d = cleanAadhaar(v);
+  return d.length === 12 ? `XXXX XXXX ${d.slice(8)}` : (d || '');
+};
+const groupAadhaar = (v) => {
+  const d = cleanAadhaar(v);
+  return d.length === 12 ? `${d.slice(0,4)} ${d.slice(4,8)} ${d.slice(8)}` : d;
+};
+
+let kyc = new Map();      // emp_id -> { aadhaar_no, pan_no, notes }
+let docs = new Map();     // emp_id -> [ document rows ]
+
+async function loadKyc() {
+  const [k, d] = await Promise.all([
+    sb.from('employee_kyc').select('*'),
+    sb.from('employee_documents').select('*').order('uploaded_at', { ascending: false }),
+  ]);
+  kyc = new Map((k.data || []).map((r) => [String(r.emp_id), r]));
+  docs = new Map();
+  (d.data || []).forEach((r) => {
+    const key = String(r.emp_id);
+    if (!docs.has(key)) docs.set(key, []);
+    docs.get(key).push(r);
+  });
+}
+
+/* ------------------------------ view -------------------------------- */
+let kycFilter = 'all';
+let kycQuery = '';
+
+async function showKyc() {
+  $('kycView').innerHTML = '<div class="empty">Loading…</div>';
+  if (!staff.length) await load();
+  await loadKyc();
+  renderKyc();
+}
+
+function kycRows() {
+  const q = kycQuery.trim().toLowerCase();
+  return staff.filter((e) => {
+    const k = kyc.get(String(e.emp_id)) || {};
+    const ds = docs.get(String(e.emp_id)) || [];
+    if (kycFilter === 'missing' && k.aadhaar_no && k.pan_no && ds.length) return false;
+    if (kycFilter === 'nodocs' && ds.length) return false;
+    if (kycFilter === 'invalid') {
+      const bad = (k.aadhaar_no && !aadhaarValid(k.aadhaar_no)) ||
+                  (k.pan_no && !panValid(k.pan_no));
+      if (!bad) return false;
+    }
+    if (q && !`${e.emp_id} ${e.name} ${e.area} ${e.designation}`.toLowerCase().includes(q))
+      return false;
+    return true;
+  }).sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function renderKyc() {
+  const rows = kycRows();
+  const withAadhaar = staff.filter((e) => kyc.get(String(e.emp_id))?.aadhaar_no).length;
+  const withPan = staff.filter((e) => kyc.get(String(e.emp_id))?.pan_no).length;
+  const withDocs = staff.filter((e) => (docs.get(String(e.emp_id)) || []).length).length;
+
+  $('kycView').innerHTML = `
+    <section class="card runbar">
+      <div>
+        <div class="eyebrow">Employee documents</div>
+        <div style="font-size:15px;margin-top:4px">
+          Aadhaar and PAN numbers, and photos of the documents.
+        </div>
+        <div class="note">${withAadhaar} of ${staff.length} have an Aadhaar number ·
+          ${withPan} have a PAN · ${withDocs} have at least one document on file</div>
+      </div>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-ghost" id="kycTplBtn">Template</button>
+        <button class="btn btn-green" id="kycImportBtn">Import numbers</button>
+      </div>
+    </section>
+
+    <div class="controls">
+      <input class="search" id="kycQ" placeholder="Search name, ID, area" value="${esc(kycQuery)}">
+      <select id="kycF">
+        <option value="all">Everyone</option>
+        <option value="missing">Anything missing</option>
+        <option value="nodocs">No documents uploaded</option>
+        <option value="invalid">Number looks wrong</option>
+      </select>
+    </div>
+
+    <div class="wrap">
+      ${rows.length ? `<table>
+        <thead><tr>
+          <th>Employee</th><th>Designation</th><th>Aadhaar</th><th>PAN</th>
+          <th>Documents</th><th class="r"></th>
+        </tr></thead>
+        <tbody>
+        ${rows.map((e) => {
+          const k = kyc.get(String(e.emp_id)) || {};
+          const ds = docs.get(String(e.emp_id)) || [];
+          const aBad = k.aadhaar_no && !aadhaarValid(k.aadhaar_no);
+          const pBad = k.pan_no && !panValid(k.pan_no);
+          return `<tr>
+            <td><div style="font-weight:500">${esc(e.name)}</div>
+                <div class="sub">${esc(e.emp_id)}</div></td>
+            <td class="sub">${esc(e.designation || '—')}</td>
+            <td class="mono" style="font-size:12px${aBad ? ';color:var(--rose)' : ''}">
+              ${k.aadhaar_no ? esc(maskAadhaar(k.aadhaar_no)) + (aBad ? ' ⚠' : '') : '<span class="sub">—</span>'}</td>
+            <td class="mono" style="font-size:12px${pBad ? ';color:var(--rose)' : ''}">
+              ${k.pan_no ? esc(k.pan_no) + (pBad ? ' ⚠' : '') : '<span class="sub">—</span>'}</td>
+            <td class="sub">${ds.length
+              ? ds.map((d) => esc(DOC_KINDS[d.kind] || d.kind)).join(', ')
+              : '<span style="color:var(--amber)">none</span>'}</td>
+            <td class="r"><button class="btn btn-ghost" data-kyc="${esc(e.emp_id)}">Open</button></td>
+          </tr>`;
+        }).join('')}
+        </tbody></table>`
+      : '<div class="empty">Nobody matches this filter.</div>'}
+    </div>`;
+
+  $('kycQ').oninput = (e) => { kycQuery = e.target.value; renderKyc(); $('kycQ').focus(); };
+  $('kycF').value = kycFilter;
+  $('kycF').onchange = (e) => { kycFilter = e.target.value; renderKyc(); };
+  $('kycTplBtn').onclick = downloadKycTemplate;
+  $('kycImportBtn').onclick = pickKycFile;
+  document.querySelectorAll('[data-kyc]').forEach((b) =>
+    b.onclick = () => openKyc(b.dataset.kyc));
+}
+
+/* --------------------------- one employee --------------------------- */
+function openKyc(empId) {
+  const e = staff.find((x) => String(x.emp_id) === String(empId));
+  const k = kyc.get(String(empId)) || {};
+  const ds = docs.get(String(empId)) || [];
+
+  openModal(`${e.name} — documents`, `
+    <div class="grid2">
+      <div>
+        <label class="f eyebrow">Aadhaar number</label>
+        <input id="kAadhaar" class="mono" inputmode="numeric" maxlength="14"
+          placeholder="0000 0000 0000" value="${esc(groupAadhaar(k.aadhaar_no))}">
+        <div class="note" id="kAadhaarNote"></div>
+      </div>
+      <div>
+        <label class="f eyebrow">PAN number</label>
+        <input id="kPan" class="mono" maxlength="10" style="text-transform:uppercase"
+          placeholder="ABCDE1234F" value="${esc(k.pan_no || '')}">
+        <div class="note" id="kPanNote"></div>
+      </div>
+    </div>
+    <div style="margin-top:14px">
+      <label class="f eyebrow">Notes</label>
+      <input id="kNotes" placeholder="anything worth recording" value="${esc(k.notes || '')}">
+    </div>
+    <div id="kErr" class="err hidden"></div>
+    <div style="display:flex;justify-content:flex-end;margin-top:14px">
+      <button class="btn btn-green" id="kSave">Save numbers</button>
+    </div>
+
+    <p class="eyebrow" style="margin:22px 0 8px">Documents</p>
+    <div id="docList"></div>
+
+    <div class="sheets" style="grid-template-columns:repeat(auto-fill,minmax(150px,1fr));margin-top:12px">
+      ${Object.entries(DOC_KINDS).map(([kind, label]) => `
+        <button class="btn btn-ghost" data-doc="${kind}" style="justify-content:center">
+          + ${esc(label)}
+        </button>`).join('')}
+    </div>
+    <p class="note">Images or PDF, up to 10 MB each. Stored privately — links expire after a minute.</p>
+
+    <div class="foot"><button class="btn btn-ghost" data-close>Close</button></div>`, 'lg');
+
+  const aIn = $('kAadhaar'), pIn = $('kPan');
+  const checkA = () => {
+    const v = cleanAadhaar(aIn.value);
+    $('kAadhaarNote').innerHTML = !v ? ''
+      : v.length !== 12 ? `<span style="color:var(--amber)">${v.length} of 12 digits</span>`
+      : aadhaarValid(v) ? '<span style="color:var(--green)">valid</span>'
+      : '<span style="color:var(--rose)">check digit fails — a digit is wrong</span>';
+  };
+  const checkP = () => {
+    const v = pIn.value.toUpperCase().trim();
+    $('kPanNote').innerHTML = !v ? ''
+      : panValid(v) ? '<span style="color:var(--green)">valid format</span>'
+      : '<span style="color:var(--rose)">should be 5 letters, 4 digits, 1 letter</span>';
+  };
+  aIn.oninput = () => {
+    const d = cleanAadhaar(aIn.value).slice(0, 12);
+    aIn.value = d.replace(/(\d{4})(?=\d)/g, '$1 ').trim();
+    checkA();
+  };
+  pIn.oninput = () => { pIn.value = pIn.value.toUpperCase(); checkP(); };
+  checkA(); checkP();
+
+  $('kSave').onclick = async () => {
+    const a = cleanAadhaar(aIn.value);
+    const pan = pIn.value.toUpperCase().trim();
+    const err = $('kErr');
+    const show = (m) => { err.textContent = m; err.classList.remove('hidden'); };
+    err.classList.add('hidden');
+    if (a && a.length !== 12) return show('Aadhaar must be 12 digits.');
+    if (pan && !panValid(pan)) return show('PAN should look like ABCDE1234F.');
+
+    const { data: { user } } = await sb.auth.getUser();
+    const { error } = await sb.from('employee_kyc').upsert({
+      emp_id: String(empId), aadhaar_no: a || null, pan_no: pan || null,
+      notes: $('kNotes').value.trim() || null, updated_by: user.id,
+    }, { onConflict: 'emp_id' });
+    if (error) return show(`Couldn't save: ${error.message}`);
+    await loadKyc();
+    renderKyc();
+    openKyc(empId);
+  };
+
+  renderDocList(empId);
+  document.querySelectorAll('[data-doc]').forEach((b) =>
+    b.onclick = () => pickDoc(empId, b.dataset.doc));
+}
+
+function renderDocList(empId) {
+  const ds = docs.get(String(empId)) || [];
+  const el = $('docList');
+  if (!el) return;
+  el.innerHTML = ds.length ? `
+    <div class="wrap"><table><tbody>
+    ${ds.map((d) => `<tr>
+      <td>${esc(DOC_KINDS[d.kind] || d.kind)}</td>
+      <td class="sub">${esc(d.filename || '')}<br>
+        ${new Date(d.uploaded_at).toLocaleDateString('en-IN')} ·
+        ${Math.round((d.size_bytes || 0) / 1024)} KB</td>
+      <td class="r" style="white-space:nowrap">
+        <button class="btn btn-ghost" data-open="${d.id}">View</button>
+        ${isMain() ? `<button class="btn btn-ghost" data-del-doc="${d.id}" style="color:var(--rose)">Delete</button>` : ''}
+      </td></tr>`).join('')}
+    </tbody></table></div>`
+    : '<div class="sub">Nothing uploaded yet.</div>';
+
+  el.querySelectorAll('[data-open]').forEach((b) =>
+    b.onclick = () => viewDoc(ds.find((d) => d.id === b.dataset.open)));
+  el.querySelectorAll('[data-del-doc]').forEach((b) =>
+    b.onclick = () => deleteDoc(empId, ds.find((d) => d.id === b.dataset.delDoc)));
+}
+
+async function viewDoc(d) {
+  const { data, error } = await sb.storage.from('employee-docs')
+    .createSignedUrl(d.path, 60);
+  if (error) return alert(`Couldn't open: ${error.message}`);
+  window.open(data.signedUrl, '_blank');
+}
+
+async function deleteDoc(empId, d) {
+  if (!confirm(`Delete ${DOC_KINDS[d.kind] || d.kind}? This cannot be undone.`)) return;
+  await sb.storage.from('employee-docs').remove([d.path]);
+  const { error } = await sb.from('employee_documents').delete().eq('id', d.id);
+  if (error) return alert(`Couldn't delete: ${error.message}`);
+  await loadKyc();
+  renderDocList(empId);
+  renderKyc();
+}
+
+function pickDoc(empId, kind) {
+  const fi = $('docInput');
+  fi.value = '';
+  fi.onchange = async () => {
+    const f = fi.files[0];
+    if (!f) return;
+    if (f.size > 10 * 1024 * 1024)
+      return alert('That file is over 10 MB. Please send a smaller photo.');
+
+    const ext = (f.name.split('.').pop() || 'jpg').toLowerCase();
+    const path = `${empId}/${kind}-${Date.now()}.${ext}`;
+    const { error: upErr } = await sb.storage.from('employee-docs')
+      .upload(path, f, { contentType: f.type, upsert: false });
+    if (upErr) return alert(`Upload failed: ${upErr.message}`);
+
+    const { data: { user } } = await sb.auth.getUser();
+    const { error } = await sb.from('employee_documents').insert({
+      emp_id: String(empId), kind, path, filename: f.name,
+      size_bytes: f.size, mime: f.type, uploaded_by: user.id,
+    });
+    if (error) {
+      await sb.storage.from('employee-docs').remove([path]);
+      return alert(`Couldn't record the document: ${error.message}`);
+    }
+    await loadKyc();
+    renderDocList(empId);
+    renderKyc();
+  };
+  fi.click();
+}
+
+/* ------------------------ import numbers ---------------------------- */
+const KYC_HEADERS = ['Employee ID', 'Employee Name', 'Aadhaar Number', 'PAN Number'];
+const KYC_MAP = {
+  employeeid: 'emp_id', empid: 'emp_id', id: 'emp_id',
+  employeename: 'name', empolyeename: 'name', name: 'name',
+  aadhaarnumber: 'aadhaar', aadharnumber: 'aadhaar', aadhaarno: 'aadhaar',
+  aadharno: 'aadhaar', aadhaar: 'aadhaar', aadhar: 'aadhaar', uid: 'aadhaar',
+  pannumber: 'pan', panno: 'pan', pan: 'pan', pancard: 'pan',
+};
+
+async function downloadKycTemplate() {
+  const XLSX = await loadSheetJS();
+  const aoa = [KYC_HEADERS,
+    ['6', 'Tushar Lakhmani', '234567890124', 'ABCDE1234F'],
+    ['8', 'Sachin Kumar', '999999990019', 'PQRSX5678G']];
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  ['A', 'C'].forEach((col) => {
+    for (let r = 2; r <= aoa.length; r++) {
+      const c = ws[col + r];
+      if (c && c.v !== '') { c.t = 's'; c.v = String(c.v); c.z = '@'; }
+    }
+  });
+  ws['!cols'] = [{ wch: 12 }, { wch: 24 }, { wch: 18 }, { wch: 14 }];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'KYC');
+  XLSX.writeFile(wb, 'kyc-template.xlsx');
+}
+
+function pickKycFile() {
+  const fi = $('fileInput');
+  fi.value = '';
+  fi.onchange = () => { if (fi.files[0]) parseKyc(fi.files[0]); };
+  fi.click();
+}
+
+async function parseKyc(file) {
+  let gridF, gridR;
+  try {
+    const XLSX = await loadSheetJS();
+    const buf = await file.arrayBuffer();
+    const wb = XLSX.read(buf, { type: 'array' });
+    const sh = wb.Sheets[wb.SheetNames[0]];
+    gridF = XLSX.utils.sheet_to_json(sh, { header: 1, blankrows: false, defval: '', raw: false });
+    gridR = XLSX.utils.sheet_to_json(sh, { header: 1, blankrows: false, defval: '', raw: true });
+  } catch (e) { return alert(`Couldn't read that file: ${e.message}`); }
+  if (!gridF || gridF.length < 2) return alert('That sheet looks empty.');
+
+  const score = (row) => (row || []).map(normKey).filter((h) => KYC_MAP[h]).length;
+  let hdr = 0, best = -1;
+  for (let r = 0; r < Math.min(15, gridF.length); r++) {
+    const sc = score(gridF[r]);
+    if (sc > best) { best = sc; hdr = r; }
+  }
+  const cols = {};
+  gridF[hdr].map(normKey).forEach((h, i) => {
+    const f = KYC_MAP[h];
+    if (f && cols[f] === undefined) cols[f] = i;
+  });
+  if (cols.emp_id === undefined)
+    return alert('No "Employee ID" column found. Numbers are matched by Employee ID only.');
+  if (cols.aadhaar === undefined && cols.pan === undefined)
+    return alert('No "Aadhaar Number" or "PAN Number" column found.');
+
+  const cell = (r, f) => {
+    const i = cols[f];
+    if (i === undefined) return '';
+    const rv = gridR[r]?.[i];
+    if (typeof rv === 'number' && isFinite(rv))
+      return Number.isInteger(rv) ? rv.toFixed(0) : String(rv);
+    return String(gridF[r]?.[i] ?? '').trim();
+  };
+
+  const known = new Map(staff.map((e) => [String(e.emp_id).toLowerCase(), e]));
+  const good = [], bad = [];
+  for (let r = hdr + 1; r < gridF.length; r++) {
+    if (!gridF[r] || gridF[r].every((c) => String(c ?? '').trim() === '')) continue;
+    const id = cell(r, 'emp_id');
+    const a = cleanAadhaar(cell(r, 'aadhaar'));
+    const pan = cell(r, 'pan').toUpperCase().trim();
+    const why = [];
+    if (!id) why.push('no Employee ID');
+    else if (!known.has(id.toLowerCase())) why.push('Employee ID not in the register');
+    if (a && a.length !== 12) why.push(`Aadhaar has ${a.length} digits, not 12`);
+    else if (a && !aadhaarValid(a)) why.push('Aadhaar check digit fails');
+    if (pan && !panValid(pan)) why.push('PAN format wrong');
+    if (!a && !pan) why.push('nothing to import');
+    if (why.length) { bad.push({ line: r + 1, who: cell(r, 'name') || id || '—', why: why.join(', ') }); continue; }
+    good.push({ emp_id: id, name: known.get(id.toLowerCase()).name, aadhaar: a, pan });
+  }
+
+  openModal('Import KYC numbers', `
+    <div style="margin-bottom:14px">
+      <span class="pill pill-new">${good.length} to save</span>
+      ${bad.length ? `<span class="pill pill-bad">${bad.length} skipped</span>` : ''}
+    </div>
+    ${good.length ? `<div class="preview"><table>
+      <thead><tr><th>ID</th><th>Name</th><th>Aadhaar</th><th>PAN</th></tr></thead><tbody>
+      ${good.slice(0, 200).map((g) => `<tr>
+        <td class="mono">${esc(g.emp_id)}</td><td>${esc(g.name)}</td>
+        <td class="mono">${esc(maskAadhaar(g.aadhaar))}</td>
+        <td class="mono">${esc(g.pan)}</td></tr>`).join('')}
+      </tbody></table></div>` : '<p style="font-size:14px">Nothing can be imported.</p>'}
+    ${bad.length ? `<p class="eyebrow" style="margin:18px 0 6px">Skipped</p>
+      <div class="preview"><table>
+      <thead><tr><th>Row</th><th>Who</th><th>Problem</th></tr></thead><tbody>
+      ${bad.map((b) => `<tr class="badrow"><td class="mono">${b.line}</td>
+        <td>${esc(b.who)}</td><td>${esc(b.why)}</td></tr>`).join('')}
+      </tbody></table></div>` : ''}
+    <div id="kycImpErr" class="err hidden"></div>
+    <div class="foot">
+      <button class="btn btn-ghost" data-close>Cancel</button>
+      <button class="btn btn-green" id="doKycImport" ${good.length ? '' : 'disabled'}>
+        Save ${good.length}</button>
+    </div>`, 'lg');
+
+  $('doKycImport').onclick = async () => {
+    const btn = $('doKycImport');
+    btn.disabled = true; btn.textContent = 'Saving…';
+    const { data: { user } } = await sb.auth.getUser();
+    const payload = good.map((g) => ({
+      emp_id: g.emp_id,
+      aadhaar_no: g.aadhaar || null,
+      pan_no: g.pan || null,
+      updated_by: user.id,
+    }));
+    const { error } = await sb.from('employee_kyc')
+      .upsert(payload, { onConflict: 'emp_id' });
+    if (error) {
+      btn.disabled = false; btn.textContent = 'Try again';
+      const e = $('kycImpErr');
+      e.textContent = `Couldn't save: ${error.message}`;
+      e.classList.remove('hidden');
+      return;
+    }
+    closeModal();
+    await loadKyc();
+    renderKyc();
+  };
 }
 
 /* ------------------------------ modal ------------------------------ */
