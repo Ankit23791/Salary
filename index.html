@@ -1009,7 +1009,10 @@ const SHEET_KINDS = {
       paidholiday: 'paid_holiday', paidholidays: 'paid_holiday',
       extradays: 'extra_days', noofextradays: 'extra_days',
       othours: 'ot_hours', overtimehours: 'ot_hours', overtime: 'ot_hours', ot: 'ot_hours',
-      totalhrs: 'total_hrs', totalhours: 'total_hrs',
+      totalhrs: 'total_hrs', totalhours: 'total_hrs', totalhr: 'total_hrs',
+      tothrs: 'total_hrs', workinghours: 'total_hrs', workinghrs: 'total_hrs',
+      totalworkinghrs: 'total_hrs', totalworkinghours: 'total_hrs',
+      hoursworked: 'total_hrs', totalhrsworked: 'total_hrs',
     },
     need: ['emp_id'],
     numeric: ['total_days', 'present', 'week_off', 'paid_leaves', 'absent',
@@ -1988,6 +1991,7 @@ async function buildSalary() {
     .sort((a, b) => a.emp.name.localeCompare(b.emp.name));
 
   return { out, holidayDays, strayHolidays, orphans, noTotalHrs,
+           attCount: attRows.length,
            uploaded: new Set(rows.map((r) => r.kind)) };
 }
 
@@ -1998,7 +2002,7 @@ async function showSalary() {
   try { res = await buildSalary(); }
   catch (e) { $('payrollView').innerHTML = `<div class="empty">Couldn't calculate: ${esc(e.message)}</div>`; return; }
 
-  const { out, holidayDays, strayHolidays, orphans, noTotalHrs, uploaded } = res;
+  const { out, holidayDays, strayHolidays, orphans, noTotalHrs, attCount, uploaded } = res;
   const missingSheets = Object.keys(SHEET_KINDS).filter((k) => !uploaded.has(k));
   const noAtt = out.filter((r) => r.calc.flag === 'no-attendance');
   const negatives = out.filter((r) => r.calc.final < 0);
@@ -2034,13 +2038,18 @@ async function showSalary() {
       without that column it cannot be calculated. Add it and upload again.
     </p>` : ''}
 
-    ${noAtt.length ? `<p style="font-size:13.5px;color:var(--rose);margin:0 0 10px">
-      ${noAtt.length} active employee${noAtt.length === 1 ? ' has' : 's have'} no attendance row
-      and come out at zero: ${esc(noAtt.slice(0, 8).map((r) => r.emp.name).join(', '))}${noAtt.length > 8 ? '…' : ''}
-    </p>` : ''}
+    ${noAtt.length ? `<div style="font-size:13.5px;color:var(--rose);margin:0 0 10px">
+      <b>${noAtt.length} active employee${noAtt.length === 1 ? ' has' : 's have'} no attendance row</b>
+      and come out at zero.
+      The attendance sheet had ${attCount} row${attCount === 1 ? '' : 's'};
+      there are ${out.length} active staff.
+      <button class="btn btn-ghost" id="missingBtn" style="margin-left:8px;padding:3px 10px">
+        See who</button>
+    </div>` : ''}
     ${orphans.length ? `<p style="font-size:13.5px;color:var(--amber);margin:0 0 10px">
       Uploaded rows for ${orphans.length} Employee ID${orphans.length === 1 ? '' : 's'} not in the
-      register — nobody is paid for these: ${esc(orphans.slice(0, 12).join(', '))}${orphans.length > 12 ? '…' : ''}
+      register — nobody is paid for these: <b>${esc(orphans.slice(0, 20).join(', '))}</b>${orphans.length > 20 ? '…' : ''}.
+      Either the ID is wrong on the sheet, or that person isn't in the staff list yet.
     </p>` : ''}
     ${strayHolidays.length ? `<p style="font-size:13.5px;color:var(--amber);margin:0 0 10px">
       ${strayHolidays.length} holiday date${strayHolidays.length === 1 ? ' is' : 's are'} outside
@@ -2093,6 +2102,37 @@ async function showSalary() {
         </tbody>
       </table>
     </div>`;
+
+  if ($('missingBtn')) $('missingBtn').onclick = () => {
+    const csv = 'Employee ID,Name,Designation,Area,Monthly Salary\n' +
+      noAtt.map((r) => [r.emp.emp_id, r.emp.name, r.emp.designation || '',
+        r.emp.area || '', r.emp.monthly_salary]
+        .map((x) => `"${String(x ?? '').replace(/"/g, '""')}"`).join(',')).join('\n');
+    openModal(`No attendance row — ${noAtt.length} people`, `
+      <p style="font-size:14px;margin:0 0 12px">
+        These active employees are not in the attendance sheet, so they are paid
+        nothing. Either they are missing from the sheet, their Employee ID differs
+        between the sheet and the register, or they should be marked inactive.
+      </p>
+      <div class="preview"><table>
+        <thead><tr><th>ID</th><th>Name</th><th>Designation</th><th>Area</th><th class="r">Salary</th></tr></thead>
+        <tbody>${noAtt.map((r) => `<tr>
+          <td class="mono">${esc(r.emp.emp_id)}</td><td>${esc(r.emp.name)}</td>
+          <td class="sub">${esc(r.emp.designation || '—')}</td>
+          <td class="sub">${esc(r.emp.area || '—')}</td>
+          <td class="r mono">${money(r.emp.monthly_salary)}</td></tr>`).join('')}
+        </tbody></table></div>
+      <div class="foot">
+        <button class="btn btn-ghost" data-close>Close</button>
+        <button class="btn btn-dark" id="dlMissing">Download list</button>
+      </div>`, 'lg');
+    $('dlMissing').onclick = () => {
+      const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8;' }));
+      const a = document.createElement('a');
+      a.href = url; a.download = `no-attendance-${currentRun.period}.csv`; a.click();
+      URL.revokeObjectURL(url);
+    };
+  };
 
   $('backRun').onclick = () => openRun(currentRun.id);
   $('dlSalary').onclick = () => exportSalary(out);
