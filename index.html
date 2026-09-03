@@ -980,7 +980,7 @@ const SHEET_KINDS = {
   attendance: {
     label: 'Attendance',
     note: 'The day grid from the attendance app. First column must be headed Employee ID.',
-    footnote: 'Total Hrs is required — overtime is worked out from it. Paid leave comes from the paid-leave sheet, not this one.',
+    footnote: 'Overtime is taken from the OT Hours column. Paid leave comes from the paid-leave sheet, not this one.',
     headersShort: ['Employee ID', 'Employee Name', 'Designation', 'Area',
                    '1 … 31 (day codes)', 'Total Days', 'Present', 'Week Off',
                    'Paid Leaves', 'Absent', 'Paid Holiday', 'Extra Days',
@@ -1889,8 +1889,8 @@ function calcSalary(emp, att, inp, period) {
   const amount = perDay * (present + weekOff + paidLeave + paidHoliday);
   const extraAmount = perDay * (extraDays + worked);
 
-  // OT is recomputed from hours — the sheet's own OT column is ignored
-  const otHours = Math.max(0, (Number(att?.total_hrs) || 0) - present * 9);
+  // Overtime hours come straight from the OT Hours column on the sheet.
+  const otHours = Math.max(0, Number(att?.ot_hours) || 0);
   const otAmount = (perDay / 9) * otHours;
 
   const pf = emp.on_roll
@@ -1929,11 +1929,21 @@ async function buildSalary() {
   const att = new Map();
   by('attendance').forEach((r) => att.set(key(r.emp_id), r.data));
 
-  // if the attendance sheet had no Total Hrs column, overtime is silently
-  // zero for everyone — worth saying so rather than letting it pass
   const attRows = by('attendance');
-  const noTotalHrs = attRows.length > 0 &&
-    !attRows.some((r) => Number(r.data.total_hrs) > 0);
+
+  // Overtime is taken from the sheet's OT Hours column. Where Total Hrs is
+  // also supplied we can see what 9 hours per present day would have given,
+  // and say how many rows disagree — without changing any figure.
+  let otChecked = 0, otDiffer = 0, otExtraHours = 0;
+  attRows.forEach((r) => {
+    const th = Number(r.data.total_hrs) || 0;
+    const p = Number(r.data.present) || 0;
+    if (!th || !p) return;
+    otChecked++;
+    const implied = Math.max(0, th - p * 9);
+    const sheet = Math.max(0, Number(r.data.ot_hours) || 0);
+    if (Math.abs(sheet - implied) > 0.5) { otDiffer++; otExtraHours += sheet - implied; }
+  });
 
   const leave = new Map();
   by('paid_leave').forEach((r) =>
@@ -1990,7 +2000,8 @@ async function buildSalary() {
     })
     .sort((a, b) => a.emp.name.localeCompare(b.emp.name));
 
-  return { out, holidayDays, strayHolidays, orphans, noTotalHrs,
+  return { out, holidayDays, strayHolidays, orphans,
+           otChecked, otDiffer, otExtraHours,
            attCount: attRows.length,
            uploaded: new Set(rows.map((r) => r.kind)) };
 }
@@ -2002,7 +2013,8 @@ async function showSalary() {
   try { res = await buildSalary(); }
   catch (e) { $('payrollView').innerHTML = `<div class="empty">Couldn't calculate: ${esc(e.message)}</div>`; return; }
 
-  const { out, holidayDays, strayHolidays, orphans, noTotalHrs, attCount, uploaded } = res;
+  const { out, holidayDays, strayHolidays, orphans, otChecked, otDiffer,
+          otExtraHours, attCount, uploaded } = res;
   const missingSheets = Object.keys(SHEET_KINDS).filter((k) => !uploaded.has(k));
   const noAtt = out.filter((r) => r.calc.flag === 'no-attendance');
   const negatives = out.filter((r) => r.calc.final < 0);
@@ -2032,10 +2044,12 @@ async function showSalary() {
       Not uploaded yet: ${missingSheets.map((k) => esc(SHEET_KINDS[k].label)).join(', ')}.
       Those amounts are counted as zero.
     </p>` : ''}
-    ${noTotalHrs ? `<p style="font-size:13.5px;color:var(--rose);margin:0 0 10px">
-      The attendance sheet has no <b>Total Hrs</b> values, so overtime is zero for
-      everyone. Overtime is worked out as Total Hrs minus 9 hours per present day —
-      without that column it cannot be calculated. Add it and upload again.
+    ${otDiffer ? `<p style="font-size:13.5px;color:var(--amber);margin:0 0 10px">
+      Overtime is taken from the sheet's <b>OT Hours</b> column, as set up.
+      On ${otDiffer} of ${otChecked} rows that column differs from what
+      Total Hrs minus 9 hours per present day would give
+      — ${otExtraHours > 0 ? `${Math.round(otExtraHours)} hours more` : `${Math.round(-otExtraHours)} hours less`} in total.
+      Nothing has been changed; worth a look if the sheet still uses an 8-hour day.
     </p>` : ''}
 
     ${noAtt.length ? `<div style="font-size:13.5px;color:var(--rose);margin:0 0 10px">
