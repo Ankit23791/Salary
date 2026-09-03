@@ -980,14 +980,15 @@ const SHEET_KINDS = {
   attendance: {
     label: 'Attendance',
     note: 'The day grid from the attendance app. First column must be headed Employee ID.',
-    footnote: 'Paid leave is taken from the paid-leave sheet, not from this one.',
+    footnote: 'Total Hrs is required — overtime is worked out from it. Paid leave comes from the paid-leave sheet, not this one.',
     headersShort: ['Employee ID', 'Employee Name', 'Designation', 'Area',
                    '1 … 31 (day codes)', 'Total Days', 'Present', 'Week Off',
-                   'Paid Leaves', 'Absent', 'Paid Holiday', 'Extra Days', 'OT Hours'],
+                   'Paid Leaves', 'Absent', 'Paid Holiday', 'Extra Days',
+                   'OT Hours', 'Total Hrs'],
     headers: ['Employee ID', 'Employee Name', 'Designation', 'Area',
               ...Array.from({ length: 31 }, (_, i) => String(i + 1)),
               'Total Days', 'Present', 'Week Off', 'Paid Leaves', 'Absent',
-              'Paid Holiday', 'Extra Days', 'OT Hours'],
+              'Paid Holiday', 'Extra Days', 'OT Hours', 'Total Hrs'],
     sample: [
       ['6', 'Tushar Lakhmani', 'Customer Executive', 'Office',
        ...Array.from({ length: 31 }, (_, i) => (i % 7 === 6 ? 'Off' : 'P')),
@@ -1328,7 +1329,7 @@ async function downloadTemplate(kind) {
 
     const pre  = ['Employee ID', 'Employee Name', 'Designation', 'Area'];
     const tail = ['Total Days', 'Present', 'Week Off', 'Paid Leaves', 'Absent',
-                  'Paid Holiday', 'Extra Days', 'OT Hours'];
+                  'Paid Holiday', 'Extra Days', 'OT Hours', 'Total Hrs'];
     headers = [...pre, ...dayHdrs, ...tail];
 
     // sample rows: present all month except Sundays off
@@ -1337,8 +1338,9 @@ async function downloadTemplate(kind) {
         (_, i) => (cal.weekday[i + 1] === 'su' ? 'Off' : 'P'));
       const present = codes.filter((c) => c === 'P').length;
       const off = codes.filter((c) => c === 'Off').length;
+      // Total Hrs drives overtime: anything above 9 hours a present day is OT
       return [id, name, desig, area, ...codes,
-              cal.days, present, off, 0, 0, 0, 0, 0];
+              cal.days, present, off, 0, 0, 0, 0, 0, present * 9];
     };
     sample = [
       mk('6', 'Tushar Lakhmani', 'Customer Executive', 'Office'),
@@ -1924,6 +1926,12 @@ async function buildSalary() {
   const att = new Map();
   by('attendance').forEach((r) => att.set(key(r.emp_id), r.data));
 
+  // if the attendance sheet had no Total Hrs column, overtime is silently
+  // zero for everyone — worth saying so rather than letting it pass
+  const attRows = by('attendance');
+  const noTotalHrs = attRows.length > 0 &&
+    !attRows.some((r) => Number(r.data.total_hrs) > 0);
+
   const leave = new Map();
   by('paid_leave').forEach((r) =>
     leave.set(key(r.emp_id), (leave.get(key(r.emp_id)) || 0) + (Number(r.data.days) || 0)));
@@ -1979,7 +1987,7 @@ async function buildSalary() {
     })
     .sort((a, b) => a.emp.name.localeCompare(b.emp.name));
 
-  return { out, holidayDays, strayHolidays, orphans,
+  return { out, holidayDays, strayHolidays, orphans, noTotalHrs,
            uploaded: new Set(rows.map((r) => r.kind)) };
 }
 
@@ -1990,7 +1998,7 @@ async function showSalary() {
   try { res = await buildSalary(); }
   catch (e) { $('payrollView').innerHTML = `<div class="empty">Couldn't calculate: ${esc(e.message)}</div>`; return; }
 
-  const { out, holidayDays, strayHolidays, orphans, uploaded } = res;
+  const { out, holidayDays, strayHolidays, orphans, noTotalHrs, uploaded } = res;
   const missingSheets = Object.keys(SHEET_KINDS).filter((k) => !uploaded.has(k));
   const noAtt = out.filter((r) => r.calc.flag === 'no-attendance');
   const negatives = out.filter((r) => r.calc.final < 0);
@@ -2020,6 +2028,12 @@ async function showSalary() {
       Not uploaded yet: ${missingSheets.map((k) => esc(SHEET_KINDS[k].label)).join(', ')}.
       Those amounts are counted as zero.
     </p>` : ''}
+    ${noTotalHrs ? `<p style="font-size:13.5px;color:var(--rose);margin:0 0 10px">
+      The attendance sheet has no <b>Total Hrs</b> values, so overtime is zero for
+      everyone. Overtime is worked out as Total Hrs minus 9 hours per present day —
+      without that column it cannot be calculated. Add it and upload again.
+    </p>` : ''}
+
     ${noAtt.length ? `<p style="font-size:13.5px;color:var(--rose);margin:0 0 10px">
       ${noAtt.length} active employee${noAtt.length === 1 ? ' has' : 's have'} no attendance row
       and come out at zero: ${esc(noAtt.slice(0, 8).map((r) => r.emp.name).join(', '))}${noAtt.length > 8 ? '…' : ''}
@@ -2061,7 +2075,8 @@ async function showSalary() {
             <td class="r mono">${calc.paid_leave}</td>
             <td class="r mono">${calc.absent || ''}</td>
             <td class="r mono">${calc.paid_holiday || ''}</td>
-            <td class="r mono">${calc.extra_days || ''}</td>
+            <td class="r mono">${(calc.extra_days + calc.holidays_worked) || ''}${
+              calc.holidays_worked ? `<span class="sub"> (${calc.holidays_worked} hol)</span>` : ''}</td>
             <td class="r mono">${n(calc.amount)}</td>
             <td class="r mono">${n(calc.pf)}</td>
             <td class="r mono">${calc.ot_hours ? calc.ot_hours.toFixed(1) : ''}</td>
@@ -2103,7 +2118,8 @@ async function exportSalary(out) {
   out.forEach(({ emp, calc, advanceBy }, i) => aoa.push([
     i + 1, String(emp.emp_id), emp.name, emp.designation || '', emp.area || '',
     r2(calc.gross), calc.days_in_month, calc.present, calc.week_off,
-    calc.paid_leave, calc.absent, calc.paid_holiday, calc.extra_days,
+    calc.paid_leave, calc.absent, calc.paid_holiday,
+    calc.extra_days + calc.holidays_worked,
     r2(calc.extra_amount), r2(calc.amount), r2(calc.pf), r2(calc.after_pf),
     r2(calc.ot_hours), r2(calc.ot_amount), r2(calc.incentive), r2(calc.expenses),
     r2(calc.before_advance), r2(calc.advance), advanceBy || '',
@@ -2688,7 +2704,7 @@ function payslipHtml({ emp, calc, advanceBy }, period, label) {
       <tr>
         <td>${calc.days_in_month}</td><td>${calc.present}</td><td>${calc.week_off}</td>
         <td>${calc.paid_leave}</td><td>${calc.paid_holiday}</td>
-        <td>${calc.absent}</td><td>${calc.extra_days}</td>
+        <td>${calc.absent}</td><td>${calc.extra_days + calc.holidays_worked}</td>
       </tr>
     </table>
 
