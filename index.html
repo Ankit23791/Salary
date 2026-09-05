@@ -247,7 +247,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
    Project Settings → API Keys. Use the anon / publishable key.
    =================================================================== */
 const SUPABASE_URL = 'https://vphmuuhnfqluvhtdpbhb.supabase.co';
-const SUPABASE_ANON_KEY = 'sb_publishable_2hAro_6cC50VDF77uiQHTw_QohUNhKe';
+const SUPABASE_ANON_KEY = 'PASTE_YOUR_PUBLISHABLE_KEY_HERE';
 
 const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
@@ -1865,12 +1865,13 @@ function calcSalary(emp, att, inp, period) {
       else if (isA(c)) aDays.push(d);
     }
 
-    // holidays taken off first — they don't consume week-off entitlement.
-    // A holiday that was worked stays a present day and is paid as extra.
+    // A holiday the person did NOT work is still paid, but it uses up one of
+    // their week-off entitlement, so it never turns into an extra day.
+    // A holiday they DID work stays a present day and is paid as an extra day.
     paidHoliday = aDays.filter((d) => holidays.includes(d)).length;
     let rest = aDays.filter((d) => !holidays.includes(d));
 
-    const ent = entitlement(present, cal.sundays.length);
+    const ent = Math.max(0, entitlement(present, cal.sundays.length) - paidHoliday);
     weekOff = Math.min(ent, rest.length);
     rest = rest.slice(weekOff);
 
@@ -1905,7 +1906,7 @@ function calcSalary(emp, att, inp, period) {
     : (emp.fixed_tds != null ? Number(emp.fixed_tds) : beforeAdvance * 0.01);
 
   const advance = Number(inp.advances) || 0;
-  const final = beforeAdvance - advance - tds;
+  const final = Math.round(beforeAdvance - advance - tds);   // paid to the rupee
 
   if (final < 0) base.notes.push('Advance exceeds pay — check this row');
 
@@ -2177,14 +2178,14 @@ async function exportSalary(out) {
     r2(calc.extra_amount), r2(calc.amount), r2(calc.pf), r2(calc.after_pf),
     r2(calc.ot_hours), r2(calc.ot_amount), r2(calc.incentive), r2(calc.expenses),
     r2(calc.before_advance), r2(calc.advance), advanceBy || '',
-    r2(calc.before_advance - calc.advance), r2(calc.tds), r2(calc.final),
+    r2(calc.before_advance - calc.advance), r2(calc.tds), Math.round(calc.final),
     emp.bank_name || '', String(emp.account_no || ''), emp.ifsc || '',
     calc.notes.join('; '),
   ]));
   aoa.push([]);
   aoa.push(['', '', 'TOTAL', '', '', '', '', '', '', '', '', '', '', '', '', '',
     '', '', '', '', '', '', '', '', '', '',
-    r2(out.reduce((s, r) => s + r.calc.final, 0))]);
+    Math.round(out.reduce((s, r) => s + r.calc.final, 0))]);
 
   const ws = XLSX.utils.aoa_to_sheet(aoa);
   // identifiers stay text so Excel can't reformat account numbers
@@ -2780,9 +2781,9 @@ function payslipHtml({ emp, calc, advanceBy }, period, label) {
     <div class="net">
       <div>
         <div class="lbl">Net pay</div>
-        <div class="words">${esc(inWords(calc.final))}</div>
+        <div class="words">${esc(inWords(Math.round(calc.final)))}</div>
       </div>
-      <div class="amt">${rup(calc.final)}</div>
+      <div class="amt">₹${Math.round(calc.final).toLocaleString('en-IN')}</div>
     </div>
 
     ${calc.notes.length ? `<div class="notes">${esc(calc.notes.join(' · '))}</div>` : ''}
